@@ -574,6 +574,25 @@ Quickshell nie zna pojęcia „monitora głównego" (Wayland go nie ma), a kolej
 a potem pierwszy z listy. Nie wpisuj tu nazwy na stałe — projekt chodzi na dwóch
 maszynach o różnych monitorach (`DP-1` na desktopie, `eDP-1` na laptopie).
 
+### DockLink (dock PluDE)
+
+Dock i launcher z `~/PluDE` chodzą jako **osobny** proces (inaczej każda edycja
+docka przeładowywałaby wyspę: nowe `AUTHORIZE` Discorda, restart mostków).
+`DockLink.qml` zbiera stan dla docka i pisze go do
+`$XDG_RUNTIME_DIR/plude/island.json` przy zmianie (150 ms zwłoki) i co 5 s.
+Po tym dock poznaje, że wyspa żyje. Zawartość: czasy powiadomień z historii
+per id `.desktop` (bez transferów), postęp transferów per aplikacja, stan
+rozmowy Discorda i `hidden` (ukrycie skrótem, `Binding` w `shell.qml`).
+
+W drugą stronę: `ipc call island showNotifications <id>` (klik w plakietkę)
+emituje `DockLink.showNotificationsRequested`. Obsługuje go `Connections`
+w delegacie `Variants` w `shell.qml`, nie `DynamicIsland.qml`.
+
+Okno na pełnym ekranie chowa wyspę na jej monitorze: `shell.qml` →
+`fullscreenOn()`, tą samą drogą co `hiddenByUser` (zamyka też nakładkę, bo
+schowane okno z `Exclusive` zjadałoby klawisze). Idzie przez `ToplevelManager`,
+więc na KWinie (pusta lista) po prostu nigdy nie zachodzi.
+
 ## Styl
 
 **Język.** Kod i komentarze po polsku. Nazwy właściwości i id-ków po angielsku,

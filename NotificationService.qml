@@ -342,6 +342,14 @@ Singleton {
         };
 
         pushHistory(entry);
+
+        // Powiadomienie przejęte z poprzedniej generacji (przeładowanie na
+        // żywo — patrz persist niżej): serwer oddaje nam wszystkie wciąż
+        // śledzone, najstarsze pierwsze. Wracają do historii, ale nie
+        // wyskakują drugi raz — inaczej każda edycja pliku rozwijałaby wyspę
+        // z dawno przeczytanym powiadomieniem.
+        if (n.lastGeneration) return;
+
         priv.latest = entry;
         expiry.restart();
         root.notified(entry);
@@ -372,6 +380,32 @@ Singleton {
         interval: root.popupDuration
         running: priv.latest !== null && !root.held
         onTriggered: priv.latest = null
+    }
+
+    // Przeładowanie na żywo: nazwę org.freedesktop.Notifications trzyma
+    // dalej TEN SAM proces (serwer z poprzedniej generacji), więc NameHasOwner
+    // mówi "zajęte" i nowa generacja nigdy nie ładowała serwera. Stary serwer
+    // wołał handlery generacji, której już nie ma — powiadomienia po każdej
+    // edycji pliku przepadały aż do restartu wyspy (odtworzone na
+    // dbus-run-session: "przed" doszło, "po" przeładowaniu już nie).
+    // Pamiętamy więc przez przeładowanie, że serwer był nasz, i ładujemy go
+    // od razu — keepOnReload przejmuje wtedy istniejącą rejestrację.
+    PersistentProperties {
+        id: persist
+        reloadableId: "notificationServer"
+
+        property bool serverOwned: false
+
+        onReloaded: {
+            if (!serverOwned) return;
+            serverLoader.active = true;
+            priv.serverActive = true;
+        }
+    }
+
+    Connections {
+        target: priv
+        function onServerActiveChanged() { persist.serverOwned = priv.serverActive; }
     }
 
     Loader {

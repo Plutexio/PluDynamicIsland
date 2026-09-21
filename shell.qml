@@ -3,6 +3,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 
 // Punkt wejścia. Uruchom:  qs -p ~/PluDynamicIslandQuickshell
 ShellRoot {
@@ -29,6 +30,31 @@ ShellRoot {
         function hide(): void { persist.hidden = true; }
         function show(): void { persist.hidden = false; }
         function isHidden(): bool { return persist.hidden; }
+
+        // Dock PluDE (~/PluDE): klik w plakietkę powiadomień na ikonie.
+        // appId na razie tylko przechodzi dalej — karta pokazuje całą historię.
+        function showNotifications(appId: string): void { DockLink.showNotificationsRequested(appId); }
+    }
+
+    // Stan dla docka PluDE — patrz DockLink.qml. Tylko ukrycie skrótem:
+    // pełny ekran dock rozpoznaje sam.
+    Binding {
+        target: DockLink
+        property: "islandHidden"
+        value: persist.hidden
+    }
+
+    // Okno na pełnym ekranie (gra, film) chowa wyspę na SWOIM monitorze.
+    // ToplevelManager, nie Quickshell.Hyprland: działa na każdym kompozytorze
+    // z wlr-foreign-toplevel-management, a na KWinie lista jest pusta i
+    // warunek po prostu nigdy nie zachodzi (bez ostrzeżeń).
+    function fullscreenOn(screen) {
+        const t = ToplevelManager.activeToplevel;
+        if (!t || !t.fullscreen || !screen) return false;
+        const scr = t.screens;
+        if (scr.length === 0) return true;
+        for (let i = 0; i < scr.length; i++) if (scr[i].name === screen.name) return true;
+        return false;
     }
 
     // Skrót globalny Hyprlanda. Protokół hyprland-global-shortcuts-v1 nie
@@ -80,7 +106,19 @@ ShellRoot {
         model: root.targetScreens
 
         DynamicIsland {
-            hiddenByUser: persist.hidden
+            id: island
+
+            // Pełny ekran chowa wyspę tą samą drogą co skrót: razem z zamknięciem
+            // nakładki, bo schowane okno z klawiaturą Exclusive zjadałoby klawisze.
+            hiddenByUser: persist.hidden || root.fullscreenOn(island.modelData)
+
+            Connections {
+                target: DockLink
+                function onShowNotificationsRequested(appId) {
+                    if (island.hiddenByUser) return;
+                    island.showCardNotice(island.cardNotifications, island.notificationDuration);
+                }
+            }
         }
     }
 }
