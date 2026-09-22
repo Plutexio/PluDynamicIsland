@@ -30,6 +30,8 @@ Singleton {
 
     // Dock prosi o pokazanie karty powiadomień (klik w plakietkę).
     signal showNotificationsRequested(string appId)
+    // Pasek PluDE prosi o nakładkę Wi-Fi / Bluetootha (klik w ikonę).
+    signal overlayRequested(string mode)
 
     // ---- stan ----
 

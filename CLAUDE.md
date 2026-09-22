@@ -586,7 +586,9 @@ rozmowy Discorda i `hidden` (ukrycie skrótem, `Binding` w `shell.qml`).
 
 W drugą stronę: `ipc call island showNotifications <id>` (klik w plakietkę)
 emituje `DockLink.showNotificationsRequested`. Obsługuje go `Connections`
-w delegacie `Variants` w `shell.qml`, nie `DynamicIsland.qml`.
+w delegacie `Variants` w `shell.qml`, nie `DynamicIsland.qml`. Tą samą drogą
+pasek PluDE otwiera nakładki: `ipc call island toggleOverlay wifi|bluetooth`
+(`DockLink.overlayRequested`; ta sama nakładka drugi raz ją zamyka).
 
 Okno na pełnym ekranie chowa wyspę na jej monitorze: `shell.qml` →
 `fullscreenOn()`, tą samą drogą co `hiddenByUser` (zamyka też nakładkę, bo

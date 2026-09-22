@@ -34,6 +34,10 @@ ShellRoot {
         // Dock PluDE (~/PluDE): klik w plakietkę powiadomień na ikonie.
         // appId na razie tylko przechodzi dalej — karta pokazuje całą historię.
         function showNotifications(appId: string): void { DockLink.showNotificationsRequested(appId); }
+
+        // Pasek PluDE: klik w ikonę Wi-Fi / Bluetootha. "wifi" | "bluetooth";
+        // drugie wywołanie z tą samą nakładką ją zamyka.
+        function toggleOverlay(mode: string): void { DockLink.overlayRequested(mode); }
     }
 
     // Stan dla docka PluDE — patrz DockLink.qml. Tylko ukrycie skrótem:
@@ -117,6 +121,12 @@ ShellRoot {
                 function onShowNotificationsRequested(appId) {
                     if (island.hiddenByUser) return;
                     island.showCardNotice(island.cardNotifications, island.notificationDuration);
+                }
+                function onOverlayRequested(mode) {
+                    if (island.hiddenByUser) return;
+                    if (mode !== "wifi" && mode !== "bluetooth") return;
+                    if (island.overlayMode === mode) island.closeOverlay();
+                    else island.openOverlay(mode);
                 }
             }
         }
