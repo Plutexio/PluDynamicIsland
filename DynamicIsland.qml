@@ -67,6 +67,12 @@ PanelWindow {
         top: true
         left: true
         right: true
+        // Okno ZAWSZE na cały ekran, choć wyspa zajmuje górę: przy nakładce
+        // klik poza wyspą ma trafić w nas (outsideCatcher). Wejście ogranicza
+        // maska, więc reszta ekranu normalnie działa. Rozciąganie okna tylko
+        // na czas nakładki przestawiało powierzchnię w trakcie animacji
+        // otwarcia (zmierzone: klatka 42–84 ms zamiast 17, widać przeskok).
+        bottom: true
     }
 
     // Wysokość okna idzie za najwyższą kartą, nie jest wpisana na sztywno:
@@ -139,6 +145,12 @@ PanelWindow {
         Region {
             item: pillHoverArea
             radius: root.collapsedHeight / 2
+        }
+
+        // Przy nakładce całe okno (czyli cały ekran) — patrz outsideCatcher.
+        Region {
+            width: root.overlayOpen ? root.width : 0
+            height: root.overlayOpen ? root.height : 0
         }
     }
 
@@ -222,6 +234,15 @@ PanelWindow {
     }
 
     function closeOverlay() { root.overlayMode = ""; }
+
+    // Klik poza wyspą zamyka nakładkę (outsideCatcher). Przez
+    // overlayReopenGuardMs po takim zamknięciu toggleOverlay z IPC jej nie
+    // otwiera: klik w Wi-Fi na pasku PluDE zamyka ją tym samym kliknięciem,
+    // a gdyby pasek też go dostał, jego toggle otworzyłby ją z powrotem.
+    property double outsideClosedAt: 0
+    property int overlayReopenGuardMs: 400
+    // Funkcja, nie właściwość: Date.now() nie jest zależnością powiązania.
+    function justClosedOutside() { return Date.now() - outsideClosedAt < overlayReopenGuardMs; }
 
     readonly property bool expanded: hovered || pinned || notice || overlayOpen
 
@@ -585,6 +606,25 @@ PanelWindow {
     // zjadałaby hover przyciskom — klikanie działało, bo goły Item nie
     // przyjmuje klawiszy myszy, ale podświetlanie już nie. Teraz przyciski
     // dostają hover jako pierwsze, a ta podkładka łapie resztę powierzchni.
+    // Klik poza wyspą przy otwartej nakładce ją zamyka. Nakładka trzyma
+    // klawiaturę Exclusive, a wtedy Hyprland nie oddaje kliknięć NIKOMU
+    // innemu (zmierzone wirtualnym wskaźnikiem: pasek PluDE ani okna nic nie
+    // dostają, HyprlandFocusGrab też nie widzi kliknięcia). Dlatego łapiemy
+    // je sami: okno i maska rosną na cały ekran, a ten obszar leży pod
+    // całą treścią. Klik w tło samej wyspy (poza przyciskami) przepuszczamy.
+    MouseArea {
+        id: outsideCatcher
+        anchors.fill: parent
+        z: -1
+        enabled: root.overlayOpen
+        onPressed: mouse => {
+            const p = mapToItem(island, mouse.x, mouse.y);
+            if (island.contains(p)) { mouse.accepted = false; return; }
+            root.outsideClosedAt = Date.now();
+            root.closeOverlay();
+        }
+    }
+
     Item {
         id: hoverArea
 
@@ -1359,13 +1399,39 @@ PanelWindow {
                 event.accepted = true;
             }
 
+            // Panel budujemy asynchronicznie i niszczymy dopiero po animacji
+            // zamknięcia. Synchronicznie budowa WifiPanel zatrzymywała
+            // pierwszą klatkę otwarcia na 145–195 ms, a zniszczenie klatkę
+            // zamknięcia na ~100 ms (zmierzone). Animacje liczą się z zegara,
+            // więc po takiej przerwie wyspa przeskakiwała. Treść i tak wchodzi
+            // przez opacity overlayHost.
+            //
+            // shownMode zostaje po zamknięciu (overlayMode wraca do ""), żeby
+            // panel dotrwał do końca animacji. overlayLingerMs > 520 ms zmiany
+            // rozmiaru wyspy.
+            property string shownMode: ""
+            property int overlayLingerMs: 600
+            Connections {
+                target: root
+                function onOverlayModeChanged() {
+                    if (root.overlayMode !== "") overlayHost.shownMode = root.overlayMode;
+                    else overlayLinger.restart();
+                }
+            }
+            Timer {
+                id: overlayLinger
+                interval: overlayHost.overlayLingerMs
+                onTriggered: if (!root.overlayOpen) overlayHost.shownMode = "";
+            }
+
             Loader {
                 id: overlay
 
                 anchors.fill: parent
-                active: root.overlayOpen
-                source: root.overlayMode === "wifi" ? "WifiPanel.qml"
-                    : root.overlayMode === "bluetooth" ? "BluetoothPanel.qml"
+                asynchronous: true
+                active: overlayHost.shownMode !== ""
+                source: overlayHost.shownMode === "wifi" ? "WifiPanel.qml"
+                    : overlayHost.shownMode === "bluetooth" ? "BluetoothPanel.qml"
                     : ""
 
                 onLoaded: item.closed.connect(root.closeOverlay)

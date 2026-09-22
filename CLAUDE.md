@@ -211,6 +211,22 @@ kliknięciu w powierzchnię, a pole formularza bierze kursor samo (`fPsk.take()`
 i wtedy nie dostałoby ani znaku. Ukrycie wyspy (`hiddenByUser`) musi zamykać
 nakładkę: schowane okno z `Exclusive` zjadałoby wszystkie klawisze.
 
+**Klik poza wyspą zamyka nakładkę.** `Exclusive` w Hyprlandzie odcina mysz od
+reszty ekranu: kliknięcia poza wyspą nie dostaje nikt, ani pasek PluDE, ani
+okna, ani `HyprlandFocusGrab` (zmierzone wirtualnym wskaźnikiem; grab dodatkowo
+sam się zdejmował przy przełączeniu na `Exclusive`). Łapiemy je więc sami:
+okno jest **zawsze** na cały ekran (`anchors.bottom`), przy nakładce maska też,
+a `outsideCatcher` pod treścią zamyka ją kliknięciem poza kształtem wyspy.
+Rozciąganie okna tylko na czas nakładki przestawiało powierzchnię w trakcie
+animacji otwarcia (klatka 42–84 ms). Klik w pasek PluDE też trafia w wyspę,
+więc drugi klik w Wi-Fi zamyka nakładkę. Przez 400 ms po takim zamknięciu
+`toggleOverlay` z IPC jej nie otwiera (gdyby pasek jednak dostał klik).
+
+**Panel nakładki** buduje `Loader` asynchronicznie i niszczy dopiero
+`overlayLingerMs` po zamknięciu (`shownMode`). Synchronicznie budowa
+`WifiPanel` zatrzymywała pierwszą klatkę otwarcia na 145–195 ms, a zniszczenie
+klatkę zamknięcia na ~100 ms, i animacja przeskakiwała.
+
 `Escape` obsługuje `FocusScope` (`overlayHost`), nie Loader — `TextInput` nie
 połyka `Escape`, więc klawisz idzie w górę drzewa i trafia tam nawet wtedy, gdy
 kursor klawiatury siedzi w polu.

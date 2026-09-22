@@ -126,7 +126,7 @@ ShellRoot {
                     if (island.hiddenByUser) return;
                     if (mode !== "wifi" && mode !== "bluetooth") return;
                     if (island.overlayMode === mode) island.closeOverlay();
-                    else island.openOverlay(mode);
+                    else if (!island.justClosedOutside()) island.openOverlay(mode);
                 }
             }
         }
