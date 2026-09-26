@@ -1,7 +1,9 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Services.Mpris
+import Quickshell.Services.UPower
 import Quickshell.Wayland
 import Quickshell.Widgets
 
@@ -35,6 +37,20 @@ PanelWindow {
     property int airPodsNoticeDuration: 3500  // ...po połączeniu AirPodsów
     property int volumeNoticeDuration: 1400   // jak długo zwinięta pigułka pokazuje pasek głośności
     property int jobBarGap: 4                 // przerwa między wyspą a paskiem postępu pod nią
+
+    // Obwódka baterii wokół zwiniętej pigułki (tylko laptop). Grubość
+    // w px — parzysta nie musi być, bo linia leży wewnątrz krawędzi, a nie
+    // na niej. Poniżej progu, bez ładowania, obwódka robi się czerwona.
+    property real batteryRingWidth: 2
+    property real batteryLowLevel: 0.2
+    // Pulsowanie przy ładowaniu: pełny cykl (przygaśnięcie i powrót) w ms
+    // i jasność w najciemniejszym punkcie (0–1).
+    property int batteryPulseMs: 2400
+    // Podłączenie / odłączenie ładowarki: zwinięta pigułka poszerza się
+    // na tyle ms do powerNoticeWidth i pokazuje stan zasilania.
+    property int powerNoticeDuration: 2600
+    property int powerNoticeWidth: 232
+    property real batteryPulseMin: 0.35
 
     // Dogładzanie słupków widma po stronie QML. Przy 60 fps klatka przychodzi
     // co ~17 ms, więc 28 ms to niecałe dwie klatki — słupek zdąży prawie
@@ -127,7 +143,7 @@ PanelWindow {
     //
     // Bierzemy większy z rozmiarów: przy rozwijaniu od razu docelowy,
     // przy zwijaniu maska kurczy się razem z wyspą.
-    readonly property int reachWidth: Math.ceil(Math.max(island.width, expanded ? expandedWidth : collapsedWidth))
+    readonly property int reachWidth: Math.ceil(Math.max(island.width, expanded ? expandedWidth : restingWidth))
     readonly property int reachHeight: Math.ceil(Math.max(island.height, expanded ? expandedHeight : collapsedHeight))
 
     // Myszkę łapie wyłącznie sam kształt wyspy (plus pigułka rozmowy, gdy jest).
@@ -216,9 +232,61 @@ PanelWindow {
         onTriggered: root.volumeNotice = false
     }
 
+    // ---- ładowarka: poszerzona pigułka ----
+    // Jak w iOS: zwinięta pigułka rozsuwa się na chwilę na boki i pokazuje
+    // "Ładowanie 48%" / "Na baterii". Wyspa się nie rozwija — to zerknięcie.
+    // Źródłem jest UPower.onBattery, nie stan baterii: `state` dochodzi do
+    // Charging z opóźnieniem, a flaga zasilacza zmienia się od razu.
+    property bool powerNotice: false
+    property bool powerNoticeOnBattery: false
+
+    // -1 = brak punktu odniesienia. Zmierzone: przy starcie onBattery
+    // przeskakuje z domyślnego false na prawdziwą wartość ZANIM displayDevice
+    // zgłosi ready, więc zmiany sprzed `available` się nie liczą, a pierwszy
+    // odczyt po nim tylko ustawia odniesienie — inaczej każdy start (i każde
+    // przeładowanie na żywo) na baterii udawałby odłączenie ładowarki.
+    property int knownPowerSource: -1
+
+    function checkPowerSource() {
+        if (!batteryRing.available) return;
+        const now = UPower.onBattery ? 1 : 0;
+        const changed = root.knownPowerSource >= 0 && now !== root.knownPowerSource;
+        root.knownPowerSource = now;
+        // Rozwinięta wyspa zasłania pigułkę, a obwódka i tak zniknęła.
+        if (!changed || root.expanded) return;
+        root.powerNoticeOnBattery = now === 1;
+        root.volumeNotice = false;
+        root.powerNotice = true;
+        powerNoticeTimer.restart();
+    }
+
+    Connections {
+        target: UPower
+        function onOnBatteryChanged() { root.checkPowerSource(); }
+    }
+
+    Connections {
+        target: batteryRing
+        function onAvailableChanged() { root.checkPowerSource(); }
+    }
+
+    Timer {
+        id: powerNoticeTimer
+        interval: root.powerNoticeDuration
+        onTriggered: root.powerNotice = false
+    }
+
+    // Szerokość zwiniętej wyspy w danej chwili. collapsedWidth zostaje stałe:
+    // od niego liczą się pozycje pigułek rozmowy i udostępniania, które na czas
+    // poszerzenia po prostu znikają, zamiast skakać na boki.
+    readonly property int restingWidth: powerNotice ? powerNoticeWidth : collapsedWidth
+
     // Najechanie na wyspę w trakcie pokazywania paska: użytkownik chce kartę,
     // nie HUD. Bez tego pasek wracałby po zjechaniu kursorem, na resztę czasu.
-    onExpandedChanged: if (expanded) root.volumeNotice = false
+    onExpandedChanged: if (expanded) {
+        root.volumeNotice = false;
+        root.powerNotice = false;
+    }
 
     // ---- nakładki (Wi-Fi, Bluetooth) ----
     // "" | "wifi" | "bluetooth". Nakładka zastępuje pasek kart i rozciąga
@@ -660,7 +728,7 @@ PanelWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.topMargin: root.topMargin
 
-        width: root.expanded ? root.expandedWidth : root.collapsedWidth
+        width: root.expanded ? root.expandedWidth : root.restingWidth
         height: root.expanded ? root.expandedHeight : root.collapsedHeight
         radius: root.expanded ? 30 : height / 2
 
@@ -743,7 +811,7 @@ PanelWindow {
             width: root.collapsedWidth - 28
             spacing: 8
 
-            opacity: (!root.expanded && root.volumeNotice) ? 1 : 0
+            opacity: (!root.expanded && root.volumeNotice && !root.powerNotice) ? 1 : 0
             visible: opacity > 0.01
 
             Behavior on opacity {
@@ -797,13 +865,59 @@ PanelWindow {
             }
         }
 
+        // ---- widok zwinięty: ładowarka ---------------------------------
+        // Szerokość stała (docelowa), nie z animowanej wyspy — tekst ma stać
+        // w miejscu, a wyspa go odsłania, rozsuwając się (jak treść rozwinięta).
+        RowLayout {
+            anchors.centerIn: parent
+            width: root.powerNoticeWidth - 32
+            spacing: 7
+
+            opacity: (!root.expanded && root.powerNotice) ? 1 : 0
+            visible: opacity > 0.01
+
+            // Wejście z opóźnieniem, żeby tekst nie wystawał poza wyspę,
+            // która dopiero zaczyna się rozsuwać.
+            Behavior on opacity {
+                SequentialAnimation {
+                    PauseAnimation { duration: root.powerNotice ? 140 : 0 }
+                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                }
+            }
+
+            IslandIcon {
+                Layout.alignment: Qt.AlignVCenter
+                kind: "bolt"
+                size: 15
+                color: root.powerNoticeOnBattery ? "#8e8e93" : "#30d158"
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: root.powerNoticeOnBattery ? "Na baterii" : "Ładowanie"
+                color: "#f2f2f2"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignVCenter
+                text: Math.round(batteryRing.level * 100) + "%"
+                color: batteryRing.low ? "#ff453a" : (root.powerNoticeOnBattery ? "#f2f2f2" : "#30d158")
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+        }
+
         // ---- widok zwinięty: sam zegar + kropka statusu ----------------
 
         RowLayout {
             anchors.centerIn: parent
             spacing: 7
 
-            opacity: (root.expanded || root.volumeNotice) ? 0 : 1
+            opacity: (root.expanded || root.volumeNotice || root.powerNotice) ? 0 : 1
             visible: opacity > 0.01
 
             Behavior on opacity {
@@ -1474,13 +1588,96 @@ PanelWindow {
     }
 
     // ---------------------------------------------------------------
+    // Obwódka baterii — pasek postępu po obrysie zwiniętej pigułki
+    // ---------------------------------------------------------------
+
+    // Rodzeństwo wyspy, nie dziecko: ClippingRectangle rysuje swoją ramkę NAD
+    // zawartością, więc od środka obwódka szłaby pod nią. Kopiuje geometrię
+    // i skalę wyspy, żeby przy kliknięciu i zwijaniu nie odstawała.
+    // Obrys zaczyna się u góry pośrodku i idzie zgodnie z zegarem, a długość
+    // przycina `trim.end` — dash pattern liczy w grubościach linii i przy
+    // zmianie rozmiaru wyspy trzeba by go przeliczać.
+    // UPower.displayDevice to zbiorcza bateria; na desktopie nie jest
+    // `isLaptopBattery` i obwódki nie ma wcale. `percentage` jest 0–1
+    // (zmierzone: 0,48 przy 48 w /sys/class/power_supply/BAT0/capacity),
+    // a `ready` przychodzi ~1 s po starcie — UPower startuje z aktywacji D-Bus.
+    Shape {
+        id: batteryRing
+
+        readonly property var battery: UPower.displayDevice
+        readonly property bool available: battery.ready && battery.isLaptopBattery
+        readonly property real level: available ? Math.max(0, Math.min(1, battery.percentage)) : 0
+        readonly property bool charging: battery.state === UPowerDeviceState.Charging
+                                         || battery.state === UPowerDeviceState.FullyCharged
+        readonly property bool low: level <= root.batteryLowLevel && !charging
+        // Pulsuje tylko prawdziwe ładowanie — FullyCharged na zasilaczu stoi
+        // spokojnie, inaczej laptop przy biurku mrugałby bez końca.
+        readonly property bool pulsing: battery.state === UPowerDeviceState.Charging
+
+        // Jasność linii jako alfa koloru, nie `opacity` Shape — tamta już
+        // steruje chowaniem obwódki przy rozwinięciu i animacje by się gryzły.
+        property real pulse: 1
+        SequentialAnimation on pulse {
+            running: batteryRing.pulsing && batteryRing.visible
+            loops: Animation.Infinite
+            NumberAnimation { to: root.batteryPulseMin; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
+            // Zatrzymana w połowie zostawiłaby linię przygaszoną na stałe.
+            onRunningChanged: if (!running) batteryRing.pulse = 1
+        }
+
+        // Linia leży w całości wewnątrz obrysu wyspy (wcięcie o pół grubości).
+        readonly property real inset: root.batteryRingWidth / 2
+        readonly property real x0: inset
+        readonly property real y0: inset
+        readonly property real x1: width - inset
+        readonly property real y1: height - inset
+        readonly property real r: Math.max(0, Math.min(island.radius, height / 2) - inset)
+
+        x: island.x
+        y: island.y
+        width: island.width
+        height: island.height
+        scale: island.scale
+
+        // Tylko w spoczynku: rozwinięta wyspa ma własną treść, a zielona rama
+        // wokół formularza Wi-Fi czy karty muzyki tylko by rozpraszała.
+        opacity: available && !root.expanded ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+
+        preferredRendererType: Shape.CurveRenderer
+
+        ShapePath {
+            strokeWidth: root.batteryRingWidth
+            strokeColor: Qt.alpha(batteryRing.low ? "#ff453a" : "#30d158", batteryRing.pulse)
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            trim.end: batteryRing.level
+
+            startX: batteryRing.width / 2
+            startY: batteryRing.y0
+
+            PathLine { x: batteryRing.x1 - batteryRing.r; y: batteryRing.y0 }
+            PathArc { x: batteryRing.x1; y: batteryRing.y0 + batteryRing.r; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x1; y: batteryRing.y1 - batteryRing.r }
+            PathArc { x: batteryRing.x1 - batteryRing.r; y: batteryRing.y1; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x0 + batteryRing.r; y: batteryRing.y1 }
+            PathArc { x: batteryRing.x0; y: batteryRing.y1 - batteryRing.r; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x0; y: batteryRing.y0 + batteryRing.r }
+            PathArc { x: batteryRing.x0 + batteryRing.r; y: batteryRing.y0; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.width / 2; y: batteryRing.y0 }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Pigułka rozmowy — obok zwiniętej wyspy, tylko podczas rozmowy
     // ---------------------------------------------------------------
 
     Rectangle {
         id: voicePill
 
-        readonly property bool shown: root.inVoice && !root.expanded
+        readonly property bool shown: root.inVoice && !root.expanded && !root.powerNotice
 
         x: pillHoverArea.x
         y: pillHoverArea.y
@@ -1569,7 +1766,7 @@ PanelWindow {
     Rectangle {
         id: screencastPill
 
-        readonly property bool shown: ScreencastService.active && !root.expanded
+        readonly property bool shown: ScreencastService.active && !root.expanded && !root.powerNotice
 
         // Lewa strona, lustrzanie do pigułki rozmowy po prawej.
         x: Math.round((root.width - root.collapsedWidth) / 2) - root.pillGap - width

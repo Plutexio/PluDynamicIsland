@@ -544,6 +544,26 @@ Mikrofon systemowy (przełącznik `micSwitch` na karcie Discorda) wycisza **wszy
 nie jest wyciszone, więc OFF gwarantuje ciszę. `muted` wymaga związania węzłów
 (`PwObjectTracker` na `sources`).
 
+### Obwódka baterii
+
+`batteryRing` w `DynamicIsland.qml`: `Shape` po obrysie zwiniętej pigułki,
+długość z `trim.end` (Qt 6.10+), start u góry pośrodku, zgodnie z zegarem.
+Źródło to `UPower.displayDevice` — `percentage` jest **0–1** (zmierzone: 0,48
+przy `BAT0/capacity` = 48), `ready` przychodzi ~1 s po starcie, bo `upower`
+startuje z aktywacji D-Bus. Bez `isLaptopBattery` (desktop) obwódki nie ma.
+Jest rodzeństwem wyspy, nie dzieckiem: `ClippingRectangle` rysuje ramkę nad
+zawartością. `CurveRenderer`, bo domyślny renderer rysuje łuki łamaną.
+Przy `Charging` (nie `FullyCharged`) linia pulsuje alfą koloru — `opacity`
+Shape jest zajęte przez chowanie przy rozwinięciu.
+
+Podłączenie/odłączenie ładowarki (`UPower.onBattery`) poszerza zwiniętą pigułkę
+do `powerNoticeWidth` (`restingWidth`, wliczone w `reachWidth`) na
+`powerNoticeDuration`. `collapsedWidth` zostaje stałe, a pigułki rozmowy
+i udostępniania na ten czas znikają. Zmierzone: przy starcie `onBattery`
+zmienia się **przed** `displayDevice.ready`, stąd `knownPowerSource = -1`
+i ignorowanie zmian sprzed `available` — inaczej każdy start na baterii
+udawałby odłączenie.
+
 ### Karta łączności (Wi-Fi, Bluetooth)
 
 Karta jest **podglądem i szybkim przełącznikiem**; wszystko, co wymaga wpisywania
