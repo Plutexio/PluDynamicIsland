@@ -16,7 +16,8 @@ import Quickshell.Services.Notifications
 //
 // 2. org.kde.JobViewServer (kopiowanie w Dolphinie, pobieranie): mostek
 //    kde_jobs_bridge.py, bo Quickshell nie wystawia własnych obiektów D-Bus.
-//    Mostek czeka w kolejce o nazwę i przejmuje ją, gdy Plasma zwolni.
+//    Mostek czeka w kolejce o nazwę i przejmuje ją, gdy Plasma zwolni;
+//    do tego czasu podgląda zadania Plasmy jako monitor D-Bus (bez anulowania).
 Singleton {
     id: root
 
@@ -428,6 +429,9 @@ Singleton {
         if (msg.event === "end") {
             if (idx >= 0) jobs.splice(idx, 1);
             priv.jobs = jobs;
+            // Plasma zniknęła razem z podglądanym zadaniem — nie wiemy, jak się
+            // skończyło, a klient i tak zgłosi je od nowa u następnego serwera.
+            if (msg.discarded) return;
             pushHistory({
                 kind: "job",
                 appName: job.applicationName || "",
@@ -446,7 +450,9 @@ Singleton {
 
         if (idx >= 0) jobs[idx] = job; else jobs.push(job);
         priv.jobs = jobs;
-        if (msg.event === "start") root.jobStarted(job);
+        // Zadanie złapane w połowie (restart mostka przy przeładowaniu wyspy)
+        // nie rozwija karty — inaczej każda edycja w trakcie kopiowania by ją otwierała.
+        if (msg.event === "start" && !msg.attached) root.jobStarted(job);
     }
 
     Timer {

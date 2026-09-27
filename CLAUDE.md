@@ -255,6 +255,10 @@ Dwa mechanizmy, oba w tym singletonie:
   (python-dbus), bo Quickshell nie wystawia własnych obiektów D-Bus. Nazwy bierze
   z kolejkowaniem — przejmuje je sam, gdy Plasma zwolni. Protokół: V1/V2 `requestView`,
   `JobViewV2` (metody `setX`) i `JobViewV3` (`update(a{sv})`, `terminate(u,s,a{sv})`).
+  Nazwę trzyma też **menedżer zadań** Plasmy (`[Jobs] InTaskManager`), więc
+  zwykle jej nie dostaje — wtedy `JobWatcher` podgląda ruch do Plasmy przez
+  `BecomeMonitor` (bez anulowania). Stan i protokół zadania są w klasie `Job`
+  wspólnej dla obu trybów; `JobView` to tylko jej twarz na D-Bus.
 
 Pułapki:
 

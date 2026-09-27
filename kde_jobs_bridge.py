@@ -5,12 +5,15 @@ Serwer zadań KDE (transfery plików) dla wyspy.
 Kopiowanie w Dolphinie, pobieranie przez integrację przeglądarki itp. NIE są
 powiadomieniami. Aplikacja woła org.kde.JobViewServer.requestView, dostaje
 ścieżkę obiektu i przez org.kde.JobViewV2/V3 raportuje postęp. Normalnie ten
-serwer trzyma aplet powiadomień Plasmy; gdy aplet jest wyłączony, przejmuje
-go ten skrypt (Quickshell nie umie wystawiać własnych obiektów D-Bus).
+serwer trzyma Plasma (aplet powiadomień, a także menedżer zadań, który
+pokazuje postęp na ikonie aplikacji).
 
-Nazwy magistrali: org.kde.JobViewServer i org.kde.kuiserver. Jeśli trzyma je
-Plasma, prośba ląduje w kolejce i przejmujemy je automatycznie, gdy Plasma
-zwolni (np. po wyłączeniu apletu) — bez restartu.
+Dwa tryby, przełączane samoczynnie:
+  - nazwa org.kde.JobViewServer wolna -> jesteśmy serwerem (Quickshell nie
+    umie wystawiać własnych obiektów D-Bus, więc robi to ten skrypt);
+  - nazwę trzyma Plasma -> podsłuchujemy jej ruch jako monitor D-Bus
+    (JobWatcher). Prośba o nazwę czeka w kolejce, więc gdy Plasma ją zwolni,
+    przejmujemy ją bez restartu.
 
   stdout -> QML : {"type":"owner","owned":bool}
                   {"type":"job","event":"start|update|end","id":N, ...pola}
@@ -22,14 +25,19 @@ Pola zadania (płaska migawka, zawsze cała): title, infoMessage, percent,
 speed, processedBytes, totalBytes, processedFiles, totalFiles, destUrl,
 descriptionLabel1/2, descriptionValue1/2, suspended, killable, suspendable,
 desktopEntry, applicationName, applicationIconName, error, errorMessage.
+Tylko w podglądzie: attached (zadanie złapane w połowie, np. po restarcie
+mostka) i discarded w "end" (Plasma zniknęła razem z zadaniem — to nie jest
+ukończenie).
 """
 
+import itertools
 import json
 import os
 import sys
-import time
 
 import dbus
+import dbus.bus
+import dbus.lowlevel
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
@@ -37,6 +45,26 @@ from gi.repository import GLib
 NAMES = ["org.kde.JobViewServer", "org.kde.kuiserver"]
 SERVER_PATH = "/JobViewServer"
 UPDATE_COALESCE_MS = 120     # KIO potrafi słać kilka aktualizacji na klatkę
+
+# Reguły monitora. Odpowiedzi filtrujemy po nazwie serwera — broker dopasowuje
+# nadawcę po nazwie, którą trzyma, więc nie ciągniemy wszystkich odpowiedzi
+# z magistrali (zmierzone na dbus-broker).
+MONITOR_RULES = [
+    "type='method_call',interface='org.kde.JobViewServer',member='requestView'",
+    "type='method_call',interface='org.kde.JobViewServerV2',member='requestView'",
+    "type='method_return',sender='org.kde.JobViewServer'",
+    "type='error',sender='org.kde.JobViewServer'",
+    "type='method_call',interface='org.kde.JobViewV2'",
+    "type='method_call',interface='org.kde.JobViewV3'",
+]
+
+# Metody JobViewV2 o tej samej sygnaturze w Job i na magistrali (terminate osobno,
+# bo w V2 i V3 znaczy co innego).
+V2_SETTERS = ("setSuspended", "setTotalAmount", "setProcessedAmount", "setPercent",
+              "setSpeed", "setElapsedTime", "setInfoMessage", "setDescriptionField",
+              "clearDescriptionField", "setDestUrl", "setError")
+
+job_ids = itertools.count(1)
 
 
 def emit(obj):
@@ -75,29 +103,14 @@ def named(name, func):
     return func
 
 
-# Dlaczego po dwie klasy: python-dbus szuka METODY po nazwie atrybutu klasy
-# (cls.__dict__[nazwa]) i dopiero potem sprawdza interfejs, więc dwie metody
-# D-Bus o tej samej nazwie (terminate w V2 i V3, requestView w V1 i V2) nie
-# mogą żyć w jednej klasie. Wyszukiwanie idzie po MRO — stara wersja siedzi
-# w klasie bazowej, nowa w pochodnej.
+class Job:
+    """Stan jednego zadania i wysyłka do QML. Wspólny dla zadań, które
+    obsługujemy sami (JobView), i podglądanych u Plasmy (JobWatcher) — oba
+    źródła mówią tym samym protokołem, więc metody noszą nazwy z D-Bus."""
 
-
-class _JobViewV2(dbus.service.Object):
-    """Stare org.kde.JobViewV2.terminate(errorMessage) — aplikacje sprzed KF6."""
-
-    @dbus.service.method("org.kde.JobViewV2", in_signature="s")
-    def terminate(self, errorMessage):
-        self.finish(1 if str(errorMessage) else 0, errorMessage)
-
-
-class JobView(_JobViewV2):
-    """Jedno zadanie. Wystawia JobViewV2 (stare API) i JobViewV3 (KF6)."""
-
-    def __init__(self, server, job_id, props, capabilities, sender):
-        self.server = server
-        self.job_id = job_id
-        self.sender = sender
-        self.path = f"{SERVER_PATH}/JobView_{job_id}"
+    def __init__(self, props, capabilities, on_end):
+        self.job_id = next(job_ids)
+        self.on_end = on_end
         self.props = {
             "title": "",
             "infoMessage": "",
@@ -126,11 +139,9 @@ class JobView(_JobViewV2):
             "errorMessage": "",
         }
         self.props.update(props)
-        self.started = time.time()
         self.pending = None
         self.finished = False
-        super().__init__(server.bus, self.path)
-        emit({"type": "job", "event": "start", "id": job_id, **self.props})
+        emit({"type": "job", "event": "start", "id": self.job_id, **self.props})
 
     # ---- wysyłka do QML ----
 
@@ -145,21 +156,18 @@ class JobView(_JobViewV2):
             emit({"type": "job", "event": "update", "id": self.job_id, **self.props})
         return False
 
-    def finish(self, error_code=0, error_message=""):
+    def end(self, extra):
         if self.finished:
             return
         self.finished = True
         if self.pending is not None:
             GLib.source_remove(self.pending)
             self.pending = None
-        self.props["error"] = int(error_code)
-        self.props["errorMessage"] = str(error_message)
-        emit({"type": "job", "event": "end", "id": self.job_id, **self.props})
-        self.server.forget(self)
-        try:
-            self.remove_from_connection()
-        except Exception:
-            pass
+        emit({"type": "job", "event": "end", "id": self.job_id, **self.props, **extra})
+        self.on_end(self)
+
+    def discard(self):
+        self.end({"discarded": True})
 
     def set_amount(self, prefix, amount, unit):
         key = prefix + str(unit)[:1].upper() + str(unit)[1:]
@@ -167,9 +175,8 @@ class JobView(_JobViewV2):
             self.props[key] = int(amount)
             self.schedule()
 
-    # ---- org.kde.JobViewV3 ----
+    # ---- JobViewV3 ----
 
-    @dbus.service.method("org.kde.JobViewV3", in_signature="a{sv}")
     def update(self, properties):
         for k, v in properties.items():
             k = str(k)
@@ -180,45 +187,38 @@ class JobView(_JobViewV2):
                 self.props[k] = v
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV3", in_signature="usa{sv}")
-    def terminate(self, errorCode, errorMessage, hints):
-        self.finish(errorCode, errorMessage)
+    def terminate(self, errorCode, errorMessage):
+        self.props["error"] = int(errorCode)
+        self.props["errorMessage"] = str(errorMessage)
+        self.end({})
 
-    # ---- org.kde.JobViewV2 (reszta starego API; terminate w klasie bazowej) ----
+    # ---- JobViewV2 (terminate(s) woła terminate(kod, s) wyżej) ----
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="b")
     def setSuspended(self, suspended):
         self.props["suspended"] = bool(suspended)
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="ts")
     def setTotalAmount(self, amount, unit):
         self.set_amount("total", amount, unit)
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="ts")
     def setProcessedAmount(self, amount, unit):
         self.set_amount("processed", amount, unit)
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
     def setPercent(self, percent):
         self.props["percent"] = int(percent)
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="t")
     def setSpeed(self, bytesPerSecond):
         self.props["speed"] = int(bytesPerSecond)
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="t")
     def setElapsedTime(self, elapsedTime):
         pass
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="s")
     def setInfoMessage(self, message):
         self.props["infoMessage"] = str(message)
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="uss", out_signature="b")
     def setDescriptionField(self, number, name, value):
         n = int(number) + 1
         if n in (1, 2):
@@ -228,7 +228,6 @@ class JobView(_JobViewV2):
             return True
         return False
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
     def clearDescriptionField(self, number):
         n = int(number) + 1
         if n in (1, 2):
@@ -236,15 +235,104 @@ class JobView(_JobViewV2):
             self.props[f"descriptionValue{n}"] = ""
             self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="v")
     def setDestUrl(self, destUrl):
         self.props["destUrl"] = str(plain(destUrl))
         self.schedule()
 
-    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
     def setError(self, errorCode):
         self.props["error"] = int(errorCode)
         self.schedule()
+
+
+# Dlaczego po dwie klasy: python-dbus szuka METODY po nazwie atrybutu klasy
+# (cls.__dict__[nazwa]) i dopiero potem sprawdza interfejs, więc dwie metody
+# D-Bus o tej samej nazwie (terminate w V2 i V3, requestView w V1 i V2) nie
+# mogą żyć w jednej klasie. Wyszukiwanie idzie po MRO — stara wersja siedzi
+# w klasie bazowej, nowa w pochodnej.
+
+
+class _JobViewV2(dbus.service.Object):
+    """Stare org.kde.JobViewV2.terminate(errorMessage) — aplikacje sprzed KF6."""
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="s")
+    def terminate(self, errorMessage):
+        self.job.terminate(1 if str(errorMessage) else 0, errorMessage)
+
+
+class JobView(_JobViewV2):
+    """Zadanie, którego serwerem jesteśmy my. Wystawia JobViewV2 (stare API)
+    i JobViewV3 (KF6), a stan trzyma w Job."""
+
+    def __init__(self, server, props, capabilities, sender):
+        self.server = server
+        self.sender = sender
+        self.job = Job(props, capabilities, self.on_end)
+        self.job_id = self.job.job_id
+        self.path = f"{SERVER_PATH}/JobView_{self.job_id}"
+        super().__init__(server.bus, self.path)
+
+    def on_end(self, job):
+        self.server.forget(self)
+        try:
+            self.remove_from_connection()
+        except Exception:
+            pass
+
+    # ---- org.kde.JobViewV3 ----
+
+    @dbus.service.method("org.kde.JobViewV3", in_signature="a{sv}")
+    def update(self, properties):
+        self.job.update(properties)
+
+    @dbus.service.method("org.kde.JobViewV3", in_signature="usa{sv}")
+    def terminate(self, errorCode, errorMessage, hints):
+        self.job.terminate(errorCode, errorMessage)
+
+    # ---- org.kde.JobViewV2 (reszta starego API; terminate w klasie bazowej) ----
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="b")
+    def setSuspended(self, suspended):
+        self.job.setSuspended(suspended)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="ts")
+    def setTotalAmount(self, amount, unit):
+        self.job.setTotalAmount(amount, unit)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="ts")
+    def setProcessedAmount(self, amount, unit):
+        self.job.setProcessedAmount(amount, unit)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
+    def setPercent(self, percent):
+        self.job.setPercent(percent)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="t")
+    def setSpeed(self, bytesPerSecond):
+        self.job.setSpeed(bytesPerSecond)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="t")
+    def setElapsedTime(self, elapsedTime):
+        pass
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="s")
+    def setInfoMessage(self, message):
+        self.job.setInfoMessage(message)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="uss", out_signature="b")
+    def setDescriptionField(self, number, name, value):
+        return self.job.setDescriptionField(number, name, value)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
+    def clearDescriptionField(self, number):
+        self.job.clearDescriptionField(number)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="v")
+    def setDestUrl(self, destUrl):
+        self.job.setDestUrl(destUrl)
+
+    @dbus.service.method("org.kde.JobViewV2", in_signature="u")
+    def setError(self, errorCode):
+        self.job.setError(errorCode)
 
     # ---- sygnały (te same nazwy w V2 i V3, więc emitujemy na obu) ----
 
@@ -285,17 +373,14 @@ class JobViewServer(_JobViewServerV1):
     def __init__(self, bus):
         self.bus = bus
         self.jobs = {}
-        self.next_id = 1
         super().__init__(bus, SERVER_PATH)
         # Klient, który zniknął z magistrali, nie zawoła terminate — sprzątamy sami.
         bus.add_signal_receiver(self.on_name_owner_changed, "NameOwnerChanged",
                                 "org.freedesktop.DBus", "org.freedesktop.DBus")
 
     def create(self, props, capabilities, sender):
-        job_id = self.next_id
-        self.next_id += 1
-        view = JobView(self, job_id, props, int(capabilities), sender)
-        self.jobs[job_id] = view
+        view = JobView(self, props, int(capabilities), sender)
+        self.jobs[view.job_id] = view
         return dbus.ObjectPath(view.path)
 
     def forget(self, view):
@@ -306,7 +391,7 @@ class JobViewServer(_JobViewServerV1):
             return
         for view in list(self.jobs.values()):
             if view.sender == old:
-                view.finish(0, "")
+                view.job.terminate(0, "")
 
     # ---- org.kde.JobViewServerV2 (KF6; V1 w klasie bazowej) ----
 
@@ -339,6 +424,124 @@ class JobViewServer(_JobViewServerV1):
     def requiresJobTrackerChanged(self, value): pass
 
 
+class JobWatcher:
+    """Podgląd zadań, których serwerem jest Plasma.
+
+    Nazwę org.kde.JobViewServer trzyma nie tylko aplet powiadomień, ale też
+    menedżer zadań (postęp na ikonie, [Jobs] InTaskManager w plasmanotifyrc,
+    domyślnie włączone) — wyłączenie apletu nie wystarcza, żeby ją zwolnił.
+    Nazwy nie da się też odebrać: Plasma rejestruje ją bez zgody na podmianę.
+    Sesyjna magistrala pozwala za to na BecomeMonitor, a klienci mówią do
+    Plasmy jawnym tekstem, więc widzimy te same wywołania co ona.
+
+    Czego tu nie ma: anulowania. cancelRequested to sygnał od serwera, a klient
+    słucha go tylko od właściciela nazwy — z podglądu zadania nie zatrzymamy.
+    """
+
+    def __init__(self, bus, watching):
+        self.bus = bus            # zwykłe połączenie — monitorem nic nie wyślemy
+        self.watching = watching  # () -> bool: nazwę trzyma ktoś inny
+        self.requests = {}        # (klient, serial requestView) -> props
+        self.jobs = {}            # ścieżka widoku u Plasmy -> (klient, Job)
+        bus.add_signal_receiver(self.on_name_owner_changed, "NameOwnerChanged",
+                                "org.freedesktop.DBus", "org.freedesktop.DBus")
+        # Osobne połączenie: po BecomeMonitor nie może już nic wysłać ani
+        # przyjąć nazwy, a broker zrywa je za każdą próbę.
+        self.monitor = dbus.bus.BusConnection(dbus.bus.BUS_SESSION)
+        self.monitor.add_message_filter(self.on_message)
+        self.monitor.call_blocking("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                   "org.freedesktop.DBus.Monitoring", "BecomeMonitor",
+                                   "asu", (MONITOR_RULES, 0))
+
+    def on_message(self, conn, msg):
+        try:
+            self.handle(msg)
+        except Exception as e:
+            log(f"podgląd zadań: {e!r}")
+        # Wywołanie metody, którego nikt nie obsłużył, libdbus kwituje sam
+        # błędem UnknownMethod — a z monitora to wysyłka i koniec połączenia.
+        return dbus.lowlevel.HANDLER_RESULT_HANDLED
+
+    def handle(self, msg):
+        if not self.watching():
+            return   # serwerem jesteśmy my, zadania idą przez JobViewServer
+        kind = msg.get_type()
+        if kind == dbus.lowlevel.MESSAGE_TYPE_METHOD_RETURN:
+            props = self.requests.pop((msg.get_destination(), msg.get_reply_serial()), None)
+            if props is not None:
+                self.start(str(msg.get_args_list()[0]), msg.get_destination(), props)
+            return
+        if kind == dbus.lowlevel.MESSAGE_TYPE_ERROR:
+            self.requests.pop((msg.get_destination(), msg.get_reply_serial()), None)
+            return
+        if kind != dbus.lowlevel.MESSAGE_TYPE_METHOD_CALL:
+            return
+
+        iface, member, args = msg.get_interface(), msg.get_member(), msg.get_args_list()
+        client = msg.get_sender()
+        if iface == "org.kde.JobViewServerV2":
+            self.requests[(client, msg.get_serial())] = {"desktopEntry": str(args[0]), **plain(args[2])}
+            return
+        if iface == "org.kde.JobViewServer":
+            self.requests[(client, msg.get_serial())] = {"applicationName": str(args[0]),
+                                                         "applicationIconName": str(args[1])}
+            return
+
+        path = str(msg.get_path())
+        entry = self.jobs.get(path)
+        if entry is None:
+            if member == "terminate":
+                return
+            # Zadanie sprzed naszego startu (restart mostka, przeładowanie wyspy):
+            # requestView nas ominęło, więc aplikację zgadujemy po procesie.
+            job = self.start(path, client, {"applicationName": self.process_name(client), "attached": True})
+        else:
+            job = entry[1]
+
+        if iface == "org.kde.JobViewV3":
+            if member == "update":
+                job.update(args[0])
+            elif member == "terminate":
+                job.terminate(args[0], args[1])
+        elif member == "terminate":
+            job.terminate(1 if str(args[0]) else 0, args[0])
+        elif member in V2_SETTERS:
+            getattr(job, member)(*args)
+
+    def start(self, path, client, props):
+        # capabilities 0: anulowanie i tak nie dojdzie (patrz docstring klasy),
+        # więc karta nie pokaże martwego przycisku.
+        job = Job(props, 0, lambda j: self.jobs.pop(path, None))
+        self.jobs[path] = (client, job)
+        return job
+
+    def process_name(self, client):
+        try:
+            pid = self.bus.call_blocking("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                         "org.freedesktop.DBus", "GetConnectionUnixProcessID",
+                                         "s", (client,))
+            with open(f"/proc/{int(pid)}/comm") as f:
+                return f.read().strip()
+        except Exception:
+            return ""
+
+    def on_name_owner_changed(self, name, old, new):
+        if name == NAMES[0]:
+            # Plasma odeszła albo przejęliśmy nazwę: jej widoki zadań przepadły,
+            # klient zarejestruje zadanie od nowa u następnego serwera.
+            for _, job in list(self.jobs.values()):
+                job.discard()
+            self.requests.clear()
+            return
+        if new != "" or not old:
+            return
+        for client, job in list(self.jobs.values()):
+            if client == old:
+                job.terminate(0, "")
+        for key in [k for k in self.requests if k[0] == old]:
+            del self.requests[key]
+
+
 class Bridge:
     def __init__(self):
         self.bus = dbus.SessionBus()
@@ -353,6 +556,11 @@ class Bridge:
         # i dostaniemy ją, gdy Plasma zwolni.
         for name in NAMES:
             self.names.append(dbus.service.BusName(name, self.bus, allow_replacement=True, do_not_queue=False))
+        try:
+            self.watcher = JobWatcher(self.bus, lambda: NAMES[0] not in self.owned)
+        except dbus.DBusException as e:
+            self.watcher = None
+            log(f"podgląd zadań Plasmy niedostępny: {e.get_dbus_message()}")
         GLib.timeout_add(500, self.report_owner)
         GLib.io_add_watch(sys.stdin.fileno(), GLib.IO_IN | GLib.IO_HUP, self.on_stdin)
 

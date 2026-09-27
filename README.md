@@ -427,13 +427,43 @@ zadania KIO **nie są powiadomieniami**. Aplikacja woła
 `org.kde.JobViewServer.requestView`, dostaje obiekt i przez
 `org.kde.JobViewV3.update({percent, speed, processedBytes, …})` raportuje
 postęp (stare aplikacje używają `JobViewV2` z osobnymi metodami `setPercent`,
-`setSpeed`…). Ten serwer też normalnie trzyma aplet Plasmy.
+`setSpeed`…). Ten serwer normalnie trzyma Plasma.
 
 Quickshell nie umie wystawiać własnych obiektów D-Bus, więc serwer to
 `kde_jobs_bridge.py` (python-dbus). Prosi o nazwy `org.kde.JobViewServer`
 i `org.kde.kuiserver` **z kolejkowaniem** — dopóki trzyma je Plasma, czeka,
-a przejmuje je automatycznie w chwili, gdy aplet zostanie wyłączony.
+a przejmuje je automatycznie w chwili, gdy Plasma je zwolni.
 Wyspa dostaje pełne migawki zadania JSON-em linia po linii (jak mostek Discorda).
+
+**Wyłączenie apletu powiadomień nie zwalnia nazwy.** Trzyma ją też menedżer
+zadań (pasek postępu na ikonie Dolphina) — `[Jobs] InTaskManager` w
+`plasmanotifyrc`, domyślnie włączone. Odebrać jej się nie da: Plasma
+rejestruje nazwę bez zgody na podmianę. Dlatego, póki nazwa jest u Plasmy,
+mostek **podgląda** jej ruch: łączy się drugi raz i woła
+`org.freedesktop.DBus.Monitoring.BecomeMonitor` z regułami na `requestView`,
+odpowiedzi od `org.kde.JobViewServer` i wywołania `JobViewV2`/`V3`. Klient
+mówi do Plasmy jawnym tekstem, więc widzimy dokładnie to, co ona. Ścieżkę
+widoku daje odpowiedź na `requestView`, parowana po `(klient, serial)`.
+
+- Podglądanego zadania **nie da się anulować**: `cancelRequested` to sygnał
+  serwera, a klient słucha go tylko od właściciela nazwy. Mostek wysyła takie
+  zadania z `killable: false`, żeby karta nie miała martwego przycisku.
+  Chcesz anulowania z wyspy — wyłącz postęp w menedżerze zadań
+  (Ustawienia → Powiadomienia → Postęp aplikacji), nazwa przejdzie na mostek.
+- Filtr monitora **musi zwracać `HANDLED`**. Nieobsłużone wywołanie metody
+  libdbus kwituje sam błędem `UnknownMethod`, a monitor nie może nic wysłać —
+  broker zrywa mu wtedy połączenie. Z tego samego powodu pytania (PID klienta)
+  idą przez drugie, zwykłe połączenie.
+- `sender='org.kde.JobViewServer'` w regule działa i na odpowiedziach —
+  dbus-broker dopasowuje po nazwie, którą nadawca trzyma. Bez tego monitor
+  ciągnąłby każdą odpowiedź z magistrali.
+- Zadanie trwające przed startem mostka (przeładowanie wyspy!) nie ma
+  `requestView`, więc powstaje przy pierwszym `update` z nazwą procesu
+  klienta i `attached: true` — wyspa nie rozwija się wtedy na kartę.
+  Aktualizacje V3 to delty (głównie `speed`/`processedBytes`, `percent` co
+  kilka sekund), więc taki wpis dopełnia się stopniowo.
+- Gdy Plasma zniknie, jej widoki przepadają — zadania kończą się z
+  `discarded: true`, bez wpisu „Ukończono" w historii.
 
 Pułapki, które kosztowały:
 
