@@ -69,7 +69,9 @@ ShellRoot {
     //
     // Loader, a nie gołe GlobalShortcut, bo poza Hyprlandem (KDE) protokołu
     // nie ma i sam obiekt zgłasza ostrzeżenie przy każdym starcie.
-    readonly property bool onHyprland: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") !== undefined
+    // Brakująca zmienna to `null`, nie `undefined` (zmierzone) — porównanie
+    // z `undefined` było zawsze prawdziwe i Loader ładował skrót także na KDE.
+    readonly property bool onHyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
     Loader {
         active: root.onHyprland
