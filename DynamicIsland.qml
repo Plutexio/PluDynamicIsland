@@ -5,7 +5,6 @@ import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Services.UPower
 import Quickshell.Wayland
-import Quickshell.Widgets
 
 // Pływająca "wyspa" na górze ekranu: w spoczynku pokazuje tylko zegar,
 // po najechaniu myszką (lub kliknięciu wyspy) rozwija się w karuzelę kart
@@ -721,7 +720,7 @@ PanelWindow {
         HoverHandler { id: pillHover }
     }
 
-    ClippingRectangle {
+    IslandClip {
         id: island
 
         anchors.top: parent.top
@@ -930,7 +929,7 @@ PanelWindow {
             // Miniaturka okładki tego, co gra. Pokazujemy ją dopiero, gdy
             // obrazek naprawdę się wczytał — inaczej w pigułce siedziałby
             // pusty szary kwadracik.
-            ClippingRectangle {
+            IslandClip {
                 Layout.preferredWidth: 22
                 Layout.preferredHeight: 22
                 Layout.alignment: Qt.AlignVCenter
@@ -1077,7 +1076,7 @@ PanelWindow {
                         anchors.bottomMargin: 16
                         spacing: 13
 
-                        ClippingRectangle {
+                        IslandClip {
                             Layout.preferredWidth: 72
                             Layout.preferredHeight: 72
                             Layout.alignment: Qt.AlignVCenter
@@ -1290,7 +1289,7 @@ PanelWindow {
                         anchors.bottomMargin: 16
                         spacing: 13
 
-                        ClippingRectangle {
+                        IslandClip {
                             Layout.preferredWidth: 72
                             Layout.preferredHeight: 72
                             Layout.alignment: Qt.AlignVCenter
@@ -1591,7 +1590,7 @@ PanelWindow {
     // Obwódka baterii — pasek postępu po obrysie zwiniętej pigułki
     // ---------------------------------------------------------------
 
-    // Rodzeństwo wyspy, nie dziecko: ClippingRectangle rysuje swoją ramkę NAD
+    // Rodzeństwo wyspy, nie dziecko: IslandClip rysuje swoją ramkę NAD
     // zawartością, więc od środka obwódka szłaby pod nią. Kopiuje geometrię
     // i skalę wyspy, żeby przy kliknięciu i zwijaniu nie odstawała.
     // Obrys zaczyna się u góry pośrodku i idzie zgodnie z zegarem, a długość

@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Services.Notifications
-import Quickshell.Widgets
 
 // Karta powiadomień: świeże powiadomienie (dopóki nie wygaśnie albo nie zostanie
 // kliknięte) zajmuje całą kartę jak dymek — historia jest wtedy schowana.
@@ -153,7 +152,7 @@ Item {
                 spacing: 12
 
                 // Ikona aplikacji / obraz; dzwonek albo strzałka, gdy brak.
-                ClippingRectangle {
+                IslandClip {
                     Layout.preferredWidth: card.popup ? 60 : 48
                     Layout.preferredHeight: card.popup ? 60 : 48
                     Layout.alignment: Qt.AlignVCenter

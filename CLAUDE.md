@@ -523,7 +523,7 @@ KAŻDE zdarzenie i na touchpadzie (tu: `syna2393`) jedno machnięcie palcem —
 `stepVolume` jest zaokrąglany do pełnego procentu, inaczej kółko zostawia
 wartości w rodzaju 0,4733 i ten sam ruch dwa razy daje inny wynik.
 
-Pigułka to `ClippingRectangle`, nie `Rectangle`: `clip: true` na `Rectangle`
+Pigułka to `IslandClip`, nie `Rectangle`: `clip: true` na `Rectangle`
 z `radius` przycina PROSTOKĄTNIE i wypełnienie wystawałoby poza zaokrąglone rogi.
 
 `AudioService.volumeNudged()` zgłasza zmianę głośności **spoza wyspy**, a wyspa
@@ -555,7 +555,7 @@ długość z `trim.end` (Qt 6.10+), start u góry pośrodku, zgodnie z zegarem.
 Źródło to `UPower.displayDevice` — `percentage` jest **0–1** (zmierzone: 0,48
 przy `BAT0/capacity` = 48), `ready` przychodzi ~1 s po starcie, bo `upower`
 startuje z aktywacji D-Bus. Bez `isLaptopBattery` (desktop) obwódki nie ma.
-Jest rodzeństwem wyspy, nie dzieckiem: `ClippingRectangle` rysuje ramkę nad
+Jest rodzeństwem wyspy, nie dzieckiem: `IslandClip` rysuje ramkę nad
 zawartością. `CurveRenderer`, bo domyślny renderer rysuje łuki łamaną.
 Przy `Charging` (nie `FullyCharged`) linia pulsuje alfą koloru — `opacity`
 Shape jest zajęte przez chowanie przy rozwinięciu.
@@ -675,4 +675,10 @@ Wewnątrz positionera (`Row`, `Column`) nie używaj `anchors` do osi prostopadł
 ustaw `y` ręcznie. Positioner steruje tylko jedną osią i kotwice potrafią się z nim gryźć.
 
 `clip: true` na `Rectangle` z `radius` **nie** zaokrągla przycinania — jest prostokątne.
-Do zaokrąglonego przycinania używaj `ClippingRectangle` z `Quickshell.Widgets`.
+Do zaokrąglonego przycinania używaj `IslandClip` (projektowy), **nie**
+`ClippingRectangle` z `Quickshell.Widgets`. Ten drugi zbiera zawartość
+w `ShaderEffectSource` z wygładzaniem, a przy ułamkowym skalowaniu (DP-1: 1,7)
+tekstura nie leży 1:1 na pikselach i filtr liniowy rozmywa czcionkę. `IslandClip`
+używa tego samego shadera Quickshella, ale przez `layer` z `smooth: false`.
+Ostrość mierzy się zrzutem `spectacle -b -n -m -o x.png` (natywna rozdzielczość
+monitora pod kursorem; `-f` składa ekrany w skali 2 i sam rozmywa).

@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell.Widgets
 
 // Pigułka wyjścia dźwięku, która robi podwójną robotę: pokazuje, DOKĄD leci
 // dźwięk, i JAK GŁOŚNO — tło wypełnia się do poziomu głośności, a obok nazwy
@@ -18,7 +17,7 @@ import Quickshell.Widgets
 //
 // ClippingRectangle, nie Rectangle: `clip: true` na Rectangle z `radius` daje
 // przycinanie PROSTOKĄTNE, więc wypełnienie wystawałoby poza zaokrąglone rogi.
-ClippingRectangle {
+IslandClip {
     id: chip
 
     readonly property bool hovering: (mouse.containsMouse && chip.switchable) || iconMouse.containsMouse
