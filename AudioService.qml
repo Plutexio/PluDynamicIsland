@@ -39,6 +39,84 @@ Singleton {
         return "speaker";
     }
 
+    // ---- głośność bieżącego wyjścia ----
+    // `audio` (a w nim volume/muted) istnieje TYLKO dla węzła związanego przez
+    // PwObjectTracker — bez tego jest null, tak samo jak przy mikrofonie.
+    // Wiążemy wyłącznie bieżące wyjście, nie wszystkie sinki: wiązanie każdego
+    // trzymałoby otwarte obiekty PipeWire bez żadnego pożytku.
+    //
+    // Skala jest ta sama, co w `wpctl get-volume` (zmierzone: 0,75 po obu
+    // stronach), czyli 0–1 liniowo — nie procenty i nie krzywa sześcienna.
+    readonly property bool volumeReady: current !== null && current.ready && current.audio !== null
+    readonly property real volume: volumeReady ? current.audio.volume : 0
+    readonly property bool muted: volumeReady && current.audio.muted
+
+    // O ile zmienia głośność jeden ZĄBEK kółka (nie pojedyncze zdarzenie).
+    property real volumeStep: 0.03
+
+    // Jeden ząbek myszy to 120 jednostek angleDelta. Touchpad przysyła zamiast
+    // tego drobne porcje po kilka-kilkanaście jednostek, więc trzeba je
+    // sumować — inaczej JEDNO machnięcie palcem daje kilkadziesiąt pełnych
+    // kroków i głośność skacze od zera do maksimum. To ta sama stała, co
+    // wheelStepDelta przy przewijaniu kart.
+    property int volumeWheelDelta: 120
+
+    function setVolume(value) {
+        if (!volumeReady) return;
+        current.audio.volume = Math.max(0, Math.min(1, value));
+    }
+
+    function stepVolume(delta) {
+        if (!volumeReady) return;
+        // Podgłośnienie wyciszonego wyjścia ma je odciszyć — inaczej procent
+        // rośnie, a z głośników dalej nic nie leci.
+        if (muted && delta > 0) current.audio.muted = false;
+        // Zaokrąglenie do pełnego procentu: bez niego kółko zostawia wartości
+        // w rodzaju 0,4733 i ten sam ruch dwa razy daje inny wynik.
+        setVolume(Math.round((root.volume + delta) * 100) / 100);
+    }
+
+    function toggleMute() {
+        if (volumeReady) current.audio.muted = !current.audio.muted;
+    }
+
+    // ---- zmiana głośności spoza wyspy ----
+    // Klawisze multimedialne, pavucontrol, cokolwiek. Wyspa pokazuje po tym
+    // pasek w zwiniętej pigułce, jak HUD głośności w iOS.
+    signal volumeNudged()
+
+    // Pierwszy odczyt po starcie i po przełączeniu wyjścia NIE jest zmianą:
+    // wartość skacze z zera na rzeczywistą albo na głośność innego urządzenia,
+    // a wyspa mrugałaby paskiem bez powodu. -1 = nie mamy jeszcze punktu
+    // odniesienia, więc najbliższy odczyt tylko go ustawia.
+    property real knownVolume: -1
+    property bool knownMuted: false
+
+    onCurrentChanged: knownVolume = -1
+    onVolumeReadyChanged: if (!volumeReady) knownVolume = -1
+
+    onVolumeChanged: noteVolume()
+    onMutedChanged: noteVolume()
+
+    function noteVolume() {
+        if (!volumeReady) return;
+
+        const hadBaseline = knownVolume >= 0;
+        // Porównanie z tolerancją: głośność to float i PipeWire potrafi
+        // przysłać tę samą wartość z drobną różnicą na końcówce.
+        const changed = hadBaseline
+            && (Math.abs(volume - knownVolume) > 0.0005 || muted !== knownMuted);
+
+        knownVolume = volume;
+        knownMuted = muted;
+
+        if (changed) root.volumeNudged();
+    }
+
+    PwObjectTracker {
+        objects: root.current ? [root.current] : []
+    }
+
     function selectSink(node) {
         if (!node) return;
         Pipewire.preferredDefaultAudioSink = node;

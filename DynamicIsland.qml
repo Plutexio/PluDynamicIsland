@@ -1,13 +1,18 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Services.Mpris
+import Quickshell.Services.UPower
+import Quickshell.Wayland
 import Quickshell.Widgets
 
 // Pływająca "wyspa" na górze ekranu: w spoczynku pokazuje tylko zegar,
 // po najechaniu myszką (lub kliknięciu wyspy) rozwija się w karuzelę kart
 // (AirPods | muzyka | Discord | zegar | łączność | powiadomienia) przewijaną
-// kółkiem; karta AirPodsów istnieje tylko wtedy, gdy słuchawki są połączone. Dodatkowo sama się rozwija
+// kółkiem; karta AirPodsów istnieje tylko wtedy, gdy słuchawki są połączone.
+// Karta łączności otwiera nakładki Wi-Fi i Bluetootha, które zastępują całą
+// karuzelę i rozciągają wyspę do własnego rozmiaru. Dodatkowo sama się rozwija
 // na chwilę, gdy zmieni się utwór — tak jak w iOS. Podczas rozmowy na
 // Discordzie obok zwiniętej pigułki stoi druga, mała, z nazwą kanału i timerem.
 PanelWindow {
@@ -30,7 +35,22 @@ PanelWindow {
     property int notificationDuration: 4500   // ...przy nowym powiadomieniu
     property int jobNoticeDuration: 3000      // ...na starcie transferu plików
     property int airPodsNoticeDuration: 3500  // ...po połączeniu AirPodsów
+    property int volumeNoticeDuration: 1400   // jak długo zwinięta pigułka pokazuje pasek głośności
     property int jobBarGap: 4                 // przerwa między wyspą a paskiem postępu pod nią
+
+    // Obwódka baterii wokół zwiniętej pigułki (tylko laptop). Grubość
+    // w px — parzysta nie musi być, bo linia leży wewnątrz krawędzi, a nie
+    // na niej. Poniżej progu, bez ładowania, obwódka robi się czerwona.
+    property real batteryRingWidth: 2
+    property real batteryLowLevel: 0.2
+    // Pulsowanie przy ładowaniu: pełny cykl (przygaśnięcie i powrót) w ms
+    // i jasność w najciemniejszym punkcie (0–1).
+    property int batteryPulseMs: 2400
+    // Podłączenie / odłączenie ładowarki: zwinięta pigułka poszerza się
+    // na tyle ms do powerNoticeWidth i pokazuje stan zasilania.
+    property int powerNoticeDuration: 2600
+    property int powerNoticeWidth: 232
+    property real batteryPulseMin: 0.35
 
     // Dogładzanie słupków widma po stronie QML. Przy 60 fps klatka przychodzi
     // co ~17 ms, więc 28 ms to niecałe dwie klatki — słupek zdąży prawie
@@ -48,6 +68,13 @@ PanelWindow {
     property int pillGap: 8             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
     property int pillMaxWidth: 200      // dłuższe nazwy kanałów / aplikacji są obcinane
 
+    // Rozmiar nakładek (Wi-Fi, Bluetooth). Wpisany tutaj, a nie brany
+    // z implicitWidth panelu, bo panele siedzą w Loaderze i przy zamkniętej
+    // nakładce w ogóle nie istnieją — a wysokość OKNA musi być stała, żeby
+    // otwarcie nakładki nie przestawiało rozmiaru powierzchni layer-shella.
+    property int overlayWidth: 620
+    property int overlayHeight: 360
+
     // ---------------------------------------------------------------
     // Okno
     // ---------------------------------------------------------------
@@ -56,6 +83,12 @@ PanelWindow {
         top: true
         left: true
         right: true
+        // Okno ZAWSZE na cały ekran, choć wyspa zajmuje górę: przy nakładce
+        // klik poza wyspą ma trafić w nas (outsideCatcher). Wejście ogranicza
+        // maska, więc reszta ekranu normalnie działa. Rozciąganie okna tylko
+        // na czas nakładki przestawiało powierzchnię w trakcie animacji
+        // otwarcia (zmierzone: klatka 42–84 ms zamiast 17, widać przeskok).
+        bottom: true
     }
 
     // Wysokość okna idzie za najwyższą kartą, nie jest wpisana na sztywno:
@@ -67,14 +100,24 @@ PanelWindow {
     // ale okno liczy się od jej wyższego wariantu — inaczej każde powiadomienie
     // przestawiałoby rozmiar okna layer-shell tam i z powrotem.
     //
-    // Karta AirPodsów wchodzi do rachunku zawsze, także gdy jej nie ma w karuzeli —
-    // z tego samego powodu: połączenie słuchawek nie ma zmieniać rozmiaru okna.
-    readonly property int maxCardHeight: Math.max(...cardHeights, airpods.implicitHeight, notifications.historyHeight)
+    // Karta AirPodsów i nakładki wchodzą do rachunku ZAWSZE, także gdy ich
+    // akurat nie widać — z tego samego powodu: ani połączenie słuchawek, ani
+    // otwarcie formularza nie ma przestawiać rozmiaru okna layer-shella.
+    readonly property int maxCardHeight: Math.max(...cardHeights, airpods.implicitHeight,
+                                                  notifications.historyHeight, overlayHeight)
     property int bottomReserve: 6
     implicitHeight: topMargin + maxCardHeight + bottomReserve + jobBarGap + jobBar.height
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore   // nie rezerwujemy miejsca — wyspa "unosi się" nad oknami
-    focusable: false
+
+    // Klawiatura TYLKO na czas formularza. Exclusive, nie OnDemand: OnDemand
+    // daje klawiaturę dopiero po kliknięciu w powierzchnię, a pole formularza
+    // bierze kursor samo (fPsk.take()) i wtedy nie dostałoby ani znaku.
+    // Poza nakładką None — wyspa nie ma prawa łapać klawiszy, bo przykryłaby
+    // skróty kompozytora.
+    WlrLayershell.keyboardFocus: root.overlayOpen
+        ? WlrKeyboardFocus.Exclusive
+        : WlrKeyboardFocus.None
 
     // Ukrycie skrótem (IpcHandler w shell.qml). Najpierw wygaszamy treść, potem
     // chowamy całe okno: samo przezroczyste okno nadal łapałoby kursor maską
@@ -87,8 +130,10 @@ PanelWindow {
     contentItem.opacity: shownOpacity
     visible: !hiddenByUser || shownOpacity > 0
 
-    // Przypięta wyspa wróciłaby po odkryciu od razu rozwinięta.
-    onHiddenByUserChanged: if (hiddenByUser) pinned = false
+    // Przypięta wyspa wróciłaby po odkryciu od razu rozwinięta, a schowane
+    // okno z klawiaturą Exclusive zjadałoby wszystkie klawisze — stąd i
+    // zamknięcie nakładki.
+    onHiddenByUserChanged: if (hiddenByUser) { pinned = false; overlayMode = ""; }
 
     // Rozmiar DOCELOWY wyspy — bez animacji. Maska wejściowa i obszar reagujący
     // na kursor muszą wyprzedzać animację rozwijania: gdyby szły za animowaną
@@ -98,7 +143,7 @@ PanelWindow {
     //
     // Bierzemy większy z rozmiarów: przy rozwijaniu od razu docelowy,
     // przy zwijaniu maska kurczy się razem z wyspą.
-    readonly property int reachWidth: Math.ceil(Math.max(island.width, expanded ? expandedWidth : collapsedWidth))
+    readonly property int reachWidth: Math.ceil(Math.max(island.width, expanded ? expandedWidth : restingWidth))
     readonly property int reachHeight: Math.ceil(Math.max(island.height, expanded ? expandedHeight : collapsedHeight))
 
     // Myszkę łapie wyłącznie sam kształt wyspy (plus pigułka rozmowy, gdy jest).
@@ -117,6 +162,12 @@ PanelWindow {
             item: pillHoverArea
             radius: root.collapsedHeight / 2
         }
+
+        // Przy nakładce całe okno (czyli cały ekran) — patrz outsideCatcher.
+        Region {
+            width: root.overlayOpen ? root.width : 0
+            height: root.overlayOpen ? root.height : 0
+        }
     }
 
     // ---------------------------------------------------------------
@@ -133,10 +184,13 @@ PanelWindow {
         || btnMic.hovering || btnDeaf.hovering || btnLeave.hovering
         || outputChip.hovering || outputChipIdle.hovering || micSwitch.hovering
         || connectivity.hovering || notifications.hovering || airpods.hovering
+        || (overlay.item ? overlay.item.hovering : false)
     readonly property bool pointerInside: areaHover.hovered || controlsHovered || pillHover.hovered
 
     onPointerInsideChanged: {
-        if (pointerInside) {
+        // Pod otwartą nakładką karuzeli nie widać, a przestawienie karty
+        // zmieniłoby ją użytkownikowi pod ręką na czas po zamknięciu.
+        if (pointerInside && !root.overlayOpen) {
             // Przy dwóch pigułkach każda otwiera swoją kartę: pigułka rozmowy
             // Discorda, główna muzykę (zegar, gdy nic nie gra). Ustawiamy ją PRZED
             // hovered, żeby wyspa od razu rosła do rozmiaru tej karty, a nie
@@ -152,7 +206,113 @@ PanelWindow {
     }
     property bool pinned: false
     property bool notice: false   // krótkie auto-rozwinięcie, "powiadomienie"
-    readonly property bool expanded: hovered || pinned || notice
+
+    // ---- pasek głośności w zwiniętej pigułce ----
+    // Zmiana głośności spoza wyspy (klawisze multimedialne, pavucontrol)
+    // zamienia na chwilę treść ZWINIĘTEJ pigułki na pasek — jak HUD głośności
+    // w iOS. Wyspa się przy tym NIE rozwija: to ma być zerknięcie, a nie
+    // wyskakujące okno pod kursorem.
+    property bool volumeNotice: false
+
+    Connections {
+        target: AudioService
+
+        function onVolumeNudged() {
+            // Rozwinięta wyspa i tak pokazuje głośność w pigułce wyjścia,
+            // a przykrycie karty paskiem byłoby krokiem wstecz.
+            if (root.expanded) return;
+            root.volumeNotice = true;
+            volumeNoticeTimer.restart();
+        }
+    }
+
+    Timer {
+        id: volumeNoticeTimer
+        interval: root.volumeNoticeDuration
+        onTriggered: root.volumeNotice = false
+    }
+
+    // ---- ładowarka: poszerzona pigułka ----
+    // Jak w iOS: zwinięta pigułka rozsuwa się na chwilę na boki i pokazuje
+    // "Ładowanie 48%" / "Na baterii". Wyspa się nie rozwija — to zerknięcie.
+    // Źródłem jest UPower.onBattery, nie stan baterii: `state` dochodzi do
+    // Charging z opóźnieniem, a flaga zasilacza zmienia się od razu.
+    property bool powerNotice: false
+    property bool powerNoticeOnBattery: false
+
+    // -1 = brak punktu odniesienia. Zmierzone: przy starcie onBattery
+    // przeskakuje z domyślnego false na prawdziwą wartość ZANIM displayDevice
+    // zgłosi ready, więc zmiany sprzed `available` się nie liczą, a pierwszy
+    // odczyt po nim tylko ustawia odniesienie — inaczej każdy start (i każde
+    // przeładowanie na żywo) na baterii udawałby odłączenie ładowarki.
+    property int knownPowerSource: -1
+
+    function checkPowerSource() {
+        if (!batteryRing.available) return;
+        const now = UPower.onBattery ? 1 : 0;
+        const changed = root.knownPowerSource >= 0 && now !== root.knownPowerSource;
+        root.knownPowerSource = now;
+        // Rozwinięta wyspa zasłania pigułkę, a obwódka i tak zniknęła.
+        if (!changed || root.expanded) return;
+        root.powerNoticeOnBattery = now === 1;
+        root.volumeNotice = false;
+        root.powerNotice = true;
+        powerNoticeTimer.restart();
+    }
+
+    Connections {
+        target: UPower
+        function onOnBatteryChanged() { root.checkPowerSource(); }
+    }
+
+    Connections {
+        target: batteryRing
+        function onAvailableChanged() { root.checkPowerSource(); }
+    }
+
+    Timer {
+        id: powerNoticeTimer
+        interval: root.powerNoticeDuration
+        onTriggered: root.powerNotice = false
+    }
+
+    // Szerokość zwiniętej wyspy w danej chwili. collapsedWidth zostaje stałe:
+    // od niego liczą się pozycje pigułek rozmowy i udostępniania, które na czas
+    // poszerzenia po prostu znikają, zamiast skakać na boki.
+    readonly property int restingWidth: powerNotice ? powerNoticeWidth : collapsedWidth
+
+    // Najechanie na wyspę w trakcie pokazywania paska: użytkownik chce kartę,
+    // nie HUD. Bez tego pasek wracałby po zjechaniu kursorem, na resztę czasu.
+    onExpandedChanged: if (expanded) {
+        root.volumeNotice = false;
+        root.powerNotice = false;
+    }
+
+    // ---- nakładki (Wi-Fi, Bluetooth) ----
+    // "" | "wifi" | "bluetooth". Nakładka zastępuje pasek kart i rozciąga
+    // wyspę do overlayWidth x overlayHeight. Świadomie NIE jest kartą
+    // karuzeli: karta musiałaby zmieścić się w slocie (slotWidth = 440),
+    // a podniesienie slotu przestawiłoby geometrię wszystkich kart.
+    property string overlayMode: ""
+    readonly property bool overlayOpen: overlayMode !== ""
+
+    function openOverlay(mode) {
+        root.pinned = false;      // nakładka i tak trzyma wyspę rozwiniętą
+        root.overlayMode = mode;
+    }
+
+    function closeOverlay() { root.overlayMode = ""; }
+
+    // Klik poza wyspą zamyka nakładkę (outsideCatcher). Przez
+    // overlayReopenGuardMs po takim zamknięciu toggleOverlay z IPC jej nie
+    // otwiera: klik w Wi-Fi na pasku PluDE zamyka ją tym samym kliknięciem,
+    // a gdyby pasek też go dostał, jego toggle otworzyłby ją z powrotem.
+    property double outsideClosedAt: 0
+    property int overlayReopenGuardMs: 400
+    // Funkcja, nie właściwość: Date.now() nie jest zależnością powiązania.
+    function justClosedOutside() { return Date.now() - outsideClosedAt < overlayReopenGuardMs; }
+
+    readonly property bool expanded: hovered || pinned || notice || overlayOpen
 
     // Karta (nazwa, nie indeks), do której wrócić po auto-rozwinięciu;
     // "" = nie wracać (muzyka zostaje na muzyce). Powiadomienie i transfer
@@ -298,8 +458,8 @@ PanelWindow {
     // Wyspa dopasowuje rozmiar do aktywnej karty.
     readonly property int collapsedWidth: 168
     readonly property int collapsedHeight: 34
-    readonly property int expandedWidth: cardWidths[currentCard]
-    readonly property int expandedHeight: cardHeights[currentCard]
+    readonly property int expandedWidth: overlayOpen ? overlayWidth : cardWidths[currentCard]
+    readonly property int expandedHeight: overlayOpen ? overlayHeight : cardHeights[currentCard]
 
     // ---- Discord ----
     readonly property bool inVoice: DiscordService.inVoice
@@ -350,6 +510,7 @@ PanelWindow {
     // wyspa została zostawiona na innej — i już na niej zostaje.
     function showNotice() {
         if (!root.hasPlayer || root.trackTitle === "") return;
+        if (root.overlayOpen) return;
         root.keyBeforeNotice = "";
         root.setCard(root.cardMusic, false);
         root.notice = true;
@@ -360,6 +521,10 @@ PanelWindow {
     // Powiadomienie pulpitu / start transferu: karta powiadomień na chwilę,
     // potem powrót do poprzedniej.
     function showCardNotice(card, duration) {
+        // Nakładka ma pierwszeństwo: wyskakująca karta powiadomień w trakcie
+        // wpisywania hasła zabrałaby wyspę spod ręki. Wpis i tak zostaje
+        // w historii, więc nic nie ginie.
+        if (root.overlayOpen) return;
         if (root.currentCard !== card && root.keyBeforeNotice === "")
             root.keyBeforeNotice = root.currentKey;
         root.setCard(card, false);
@@ -379,6 +544,22 @@ PanelWindow {
 
         function onNotified(entry) { root.showCardNotice(root.cardNotifications, root.notificationDuration); }
         function onJobStarted(job) { root.showCardNotice(root.cardNotifications, root.jobNoticeDuration); }
+    }
+
+    // Parowanie potrafi zacząć URZĄDZENIE (klawiatura, telefon), a nie my.
+    // BlueZ pyta wtedy naszego agenta z otwartym wywołaniem D-Bus i własnym
+    // limitem czasu — bez tego pytanie nie miałoby się gdzie pokazać i po
+    // prostu by wygasło.
+    //
+    // Tylko przy ZAMKNIĘTEJ nakładce: wyrwanie panelu Wi-Fi w trakcie
+    // wpisywania hasła skasowałoby to, co użytkownik już wpisał. Pytanie
+    // odrzuci wtedy limit czasu i wystarczy sparować jeszcze raz.
+    Connections {
+        target: BluetoothService
+
+        function onAskingChanged() {
+            if (BluetoothService.asking && !root.overlayOpen) root.openOverlay("bluetooth");
+        }
     }
 
     // AirPodsy: karta wchodzi do karuzeli i wychodzi z niej razem z połączeniem.
@@ -493,6 +674,25 @@ PanelWindow {
     // zjadałaby hover przyciskom — klikanie działało, bo goły Item nie
     // przyjmuje klawiszy myszy, ale podświetlanie już nie. Teraz przyciski
     // dostają hover jako pierwsze, a ta podkładka łapie resztę powierzchni.
+    // Klik poza wyspą przy otwartej nakładce ją zamyka. Nakładka trzyma
+    // klawiaturę Exclusive, a wtedy Hyprland nie oddaje kliknięć NIKOMU
+    // innemu (zmierzone wirtualnym wskaźnikiem: pasek PluDE ani okna nic nie
+    // dostają, HyprlandFocusGrab też nie widzi kliknięcia). Dlatego łapiemy
+    // je sami: okno i maska rosną na cały ekran, a ten obszar leży pod
+    // całą treścią. Klik w tło samej wyspy (poza przyciskami) przepuszczamy.
+    MouseArea {
+        id: outsideCatcher
+        anchors.fill: parent
+        z: -1
+        enabled: root.overlayOpen
+        onPressed: mouse => {
+            const p = mapToItem(island, mouse.x, mouse.y);
+            if (island.contains(p)) { mouse.accepted = false; return; }
+            root.outsideClosedAt = Date.now();
+            root.closeOverlay();
+        }
+    }
+
     Item {
         id: hoverArea
 
@@ -528,7 +728,7 @@ PanelWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.topMargin: root.topMargin
 
-        width: root.expanded ? root.expandedWidth : root.collapsedWidth
+        width: root.expanded ? root.expandedWidth : root.restingWidth
         height: root.expanded ? root.expandedHeight : root.collapsedHeight
         radius: root.expanded ? 30 : height / 2
 
@@ -560,6 +760,9 @@ PanelWindow {
         MouseArea {
             id: mouseArea
             anchors.fill: parent
+            // Nakładka i tak trzyma wyspę rozwiniętą, a klik w tło formularza
+            // przypinałby ją tylko po to, żeby po zamknięciu została otwarta.
+            enabled: !root.overlayOpen
             onClicked: root.pinned = !root.pinned
         }
 
@@ -569,7 +772,8 @@ PanelWindow {
             id: wheel
 
             target: null
-            enabled: root.expanded
+            // Pod nakładką kółko należy do jej list, nie do karuzeli.
+            enabled: root.expanded && !root.overlayOpen
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             property real accum: 0
 
@@ -598,13 +802,122 @@ PanelWindow {
             onTriggered: wheel.accum = 0
         }
 
+        // ---- widok zwinięty: pasek głośności ---------------------------
+        // Zamiast zegara, na volumeNoticeDuration po zmianie głośności
+        // spoza wyspy. Ta sama pigułka, tylko inna treść — bez rozwijania
+        // i bez zmiany rozmiaru, więc nic nie skacze na ekranie.
+        RowLayout {
+            anchors.centerIn: parent
+            width: root.collapsedWidth - 28
+            spacing: 8
+
+            opacity: (!root.expanded && root.volumeNotice && !root.powerNotice) ? 1 : 0
+            visible: opacity > 0.01
+
+            Behavior on opacity {
+                NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
+            }
+
+            IslandIcon {
+                Layout.alignment: Qt.AlignVCenter
+                kind: AudioService.muted ? "volumeOff"
+                    : (AudioService.volume < 0.5 ? "volumeLow" : "volume")
+                size: 14
+                color: AudioService.muted ? "#e5484d" : "#f2f2f2"
+                Behavior on color { ColorAnimation { duration: 140 } }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 4
+                Layout.alignment: Qt.AlignVCenter
+                radius: 2
+                antialiasing: true
+                color: Qt.rgba(1, 1, 1, 0.16)
+
+                Rectangle {
+                    width: parent.width * Math.max(0, Math.min(1, AudioService.volume))
+                    height: parent.height
+                    radius: parent.radius
+                    antialiasing: true
+                    // Wyciszone: pasek zostaje, ale przygaszony — widać poziom,
+                    // do którego wróci odciszenie.
+                    color: AudioService.muted ? "#5a5a62" : "#ededf0"
+
+                    Behavior on width {
+                        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on color { ColorAnimation { duration: 160 } }
+                }
+            }
+
+            // Stała szerokość, żeby pasek nie drgał przy przejściu
+            // z "9%" na "100%".
+            Text {
+                Layout.preferredWidth: 30
+                Layout.alignment: Qt.AlignVCenter
+                horizontalAlignment: Text.AlignRight
+                text: Math.round(AudioService.volume * 100) + "%"
+                color: AudioService.muted ? "#78787f" : "#f2f2f2"
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                Behavior on color { ColorAnimation { duration: 140 } }
+            }
+        }
+
+        // ---- widok zwinięty: ładowarka ---------------------------------
+        // Szerokość stała (docelowa), nie z animowanej wyspy — tekst ma stać
+        // w miejscu, a wyspa go odsłania, rozsuwając się (jak treść rozwinięta).
+        RowLayout {
+            anchors.centerIn: parent
+            width: root.powerNoticeWidth - 32
+            spacing: 7
+
+            opacity: (!root.expanded && root.powerNotice) ? 1 : 0
+            visible: opacity > 0.01
+
+            // Wejście z opóźnieniem, żeby tekst nie wystawał poza wyspę,
+            // która dopiero zaczyna się rozsuwać.
+            Behavior on opacity {
+                SequentialAnimation {
+                    PauseAnimation { duration: root.powerNotice ? 140 : 0 }
+                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                }
+            }
+
+            IslandIcon {
+                Layout.alignment: Qt.AlignVCenter
+                kind: "bolt"
+                size: 15
+                color: root.powerNoticeOnBattery ? "#8e8e93" : "#30d158"
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: root.powerNoticeOnBattery ? "Na baterii" : "Ładowanie"
+                color: "#f2f2f2"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignVCenter
+                text: Math.round(batteryRing.level * 100) + "%"
+                color: batteryRing.low ? "#ff453a" : (root.powerNoticeOnBattery ? "#f2f2f2" : "#30d158")
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+        }
+
         // ---- widok zwinięty: sam zegar + kropka statusu ----------------
 
         RowLayout {
             anchors.centerIn: parent
             spacing: 7
 
-            opacity: root.expanded ? 0 : 1
+            opacity: (root.expanded || root.volumeNotice || root.powerNotice) ? 0 : 1
             visible: opacity > 0.01
 
             Behavior on opacity {
@@ -735,7 +1048,7 @@ PanelWindow {
             // zostaje w środku przez cały czas rozciągania.
             x: (island.width - root.slotWidth) / 2 - stripOffset
 
-            opacity: root.expanded ? 1 : 0
+            opacity: (root.expanded && !root.overlayOpen) ? 1 : 0
             visible: opacity > 0.01
 
             Behavior on opacity {
@@ -814,7 +1127,9 @@ PanelWindow {
                                 visible: root.trackArtist !== ""
                             }
 
-                            // Wyjście dźwięku: klik przełącza na następny sink.
+                            // Wyjście dźwięku i głośność w jednym: klik w ikonę
+                            // wycisza, klik w resztę przełącza wyjście, kółko
+                            // zmienia głośność.
                             AudioOutputChip {
                                 id: outputChip
                                 Layout.topMargin: 4
@@ -1114,6 +1429,9 @@ PanelWindow {
                     anchors.centerIn: parent
                     width: implicitWidth
                     height: implicitHeight
+
+                    onOpenWifi: root.openOverlay("wifi")
+                    onOpenBluetooth: root.openOverlay("bluetooth")
                 }
             }
 
@@ -1165,6 +1483,74 @@ PanelWindow {
                 }
             }
         }
+
+        // ---- nakładki: Wi-Fi i Bluetooth -------------------------------
+        // Zastępują cały pasek kart. Panel powstaje dopiero przy otwarciu —
+        // skaner Wi-Fi i skanowanie Bluetootha włączają się w jego
+        // Component.onCompleted i mają zgasnąć razem z nim.
+        //
+        // focus na hoście, nie na Loaderze: Escape ma działać także wtedy,
+        // gdy kursor klawiatury siedzi w polu tekstowym. TextInput nie
+        // połyka Escape, więc klawisz idzie w górę drzewa i trafia tutaj.
+        FocusScope {
+            id: overlayHost
+
+            anchors.centerIn: parent
+            width: root.overlayWidth
+            height: root.overlayHeight
+
+            focus: root.overlayOpen
+            opacity: root.overlayOpen ? 1 : 0
+            visible: opacity > 0.01
+            enabled: root.overlayOpen
+
+            Behavior on opacity {
+                NumberAnimation { duration: root.overlayOpen ? 260 : 120; easing.type: Easing.OutCubic }
+            }
+
+            Keys.onEscapePressed: event => {
+                root.closeOverlay();
+                event.accepted = true;
+            }
+
+            // Panel budujemy asynchronicznie i niszczymy dopiero po animacji
+            // zamknięcia. Synchronicznie budowa WifiPanel zatrzymywała
+            // pierwszą klatkę otwarcia na 145–195 ms, a zniszczenie klatkę
+            // zamknięcia na ~100 ms (zmierzone). Animacje liczą się z zegara,
+            // więc po takiej przerwie wyspa przeskakiwała. Treść i tak wchodzi
+            // przez opacity overlayHost.
+            //
+            // shownMode zostaje po zamknięciu (overlayMode wraca do ""), żeby
+            // panel dotrwał do końca animacji. overlayLingerMs > 520 ms zmiany
+            // rozmiaru wyspy.
+            property string shownMode: ""
+            property int overlayLingerMs: 600
+            Connections {
+                target: root
+                function onOverlayModeChanged() {
+                    if (root.overlayMode !== "") overlayHost.shownMode = root.overlayMode;
+                    else overlayLinger.restart();
+                }
+            }
+            Timer {
+                id: overlayLinger
+                interval: overlayHost.overlayLingerMs
+                onTriggered: if (!root.overlayOpen) overlayHost.shownMode = "";
+            }
+
+            Loader {
+                id: overlay
+
+                anchors.fill: parent
+                asynchronous: true
+                active: overlayHost.shownMode !== ""
+                source: overlayHost.shownMode === "wifi" ? "WifiPanel.qml"
+                    : overlayHost.shownMode === "bluetooth" ? "BluetoothPanel.qml"
+                    : ""
+
+                onLoaded: item.closed.connect(root.closeOverlay)
+            }
+        }
     }
 
     // ---------------------------------------------------------------
@@ -1202,13 +1588,96 @@ PanelWindow {
     }
 
     // ---------------------------------------------------------------
+    // Obwódka baterii — pasek postępu po obrysie zwiniętej pigułki
+    // ---------------------------------------------------------------
+
+    // Rodzeństwo wyspy, nie dziecko: ClippingRectangle rysuje swoją ramkę NAD
+    // zawartością, więc od środka obwódka szłaby pod nią. Kopiuje geometrię
+    // i skalę wyspy, żeby przy kliknięciu i zwijaniu nie odstawała.
+    // Obrys zaczyna się u góry pośrodku i idzie zgodnie z zegarem, a długość
+    // przycina `trim.end` — dash pattern liczy w grubościach linii i przy
+    // zmianie rozmiaru wyspy trzeba by go przeliczać.
+    // UPower.displayDevice to zbiorcza bateria; na desktopie nie jest
+    // `isLaptopBattery` i obwódki nie ma wcale. `percentage` jest 0–1
+    // (zmierzone: 0,48 przy 48 w /sys/class/power_supply/BAT0/capacity),
+    // a `ready` przychodzi ~1 s po starcie — UPower startuje z aktywacji D-Bus.
+    Shape {
+        id: batteryRing
+
+        readonly property var battery: UPower.displayDevice
+        readonly property bool available: battery.ready && battery.isLaptopBattery
+        readonly property real level: available ? Math.max(0, Math.min(1, battery.percentage)) : 0
+        readonly property bool charging: battery.state === UPowerDeviceState.Charging
+                                         || battery.state === UPowerDeviceState.FullyCharged
+        readonly property bool low: level <= root.batteryLowLevel && !charging
+        // Pulsuje tylko prawdziwe ładowanie — FullyCharged na zasilaczu stoi
+        // spokojnie, inaczej laptop przy biurku mrugałby bez końca.
+        readonly property bool pulsing: battery.state === UPowerDeviceState.Charging
+
+        // Jasność linii jako alfa koloru, nie `opacity` Shape — tamta już
+        // steruje chowaniem obwódki przy rozwinięciu i animacje by się gryzły.
+        property real pulse: 1
+        SequentialAnimation on pulse {
+            running: batteryRing.pulsing && batteryRing.visible
+            loops: Animation.Infinite
+            NumberAnimation { to: root.batteryPulseMin; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
+            // Zatrzymana w połowie zostawiłaby linię przygaszoną na stałe.
+            onRunningChanged: if (!running) batteryRing.pulse = 1
+        }
+
+        // Linia leży w całości wewnątrz obrysu wyspy (wcięcie o pół grubości).
+        readonly property real inset: root.batteryRingWidth / 2
+        readonly property real x0: inset
+        readonly property real y0: inset
+        readonly property real x1: width - inset
+        readonly property real y1: height - inset
+        readonly property real r: Math.max(0, Math.min(island.radius, height / 2) - inset)
+
+        x: island.x
+        y: island.y
+        width: island.width
+        height: island.height
+        scale: island.scale
+
+        // Tylko w spoczynku: rozwinięta wyspa ma własną treść, a zielona rama
+        // wokół formularza Wi-Fi czy karty muzyki tylko by rozpraszała.
+        opacity: available && !root.expanded ? 1 : 0
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+
+        preferredRendererType: Shape.CurveRenderer
+
+        ShapePath {
+            strokeWidth: root.batteryRingWidth
+            strokeColor: Qt.alpha(batteryRing.low ? "#ff453a" : "#30d158", batteryRing.pulse)
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            trim.end: batteryRing.level
+
+            startX: batteryRing.width / 2
+            startY: batteryRing.y0
+
+            PathLine { x: batteryRing.x1 - batteryRing.r; y: batteryRing.y0 }
+            PathArc { x: batteryRing.x1; y: batteryRing.y0 + batteryRing.r; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x1; y: batteryRing.y1 - batteryRing.r }
+            PathArc { x: batteryRing.x1 - batteryRing.r; y: batteryRing.y1; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x0 + batteryRing.r; y: batteryRing.y1 }
+            PathArc { x: batteryRing.x0; y: batteryRing.y1 - batteryRing.r; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.x0; y: batteryRing.y0 + batteryRing.r }
+            PathArc { x: batteryRing.x0 + batteryRing.r; y: batteryRing.y0; radiusX: batteryRing.r; radiusY: batteryRing.r }
+            PathLine { x: batteryRing.width / 2; y: batteryRing.y0 }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Pigułka rozmowy — obok zwiniętej wyspy, tylko podczas rozmowy
     // ---------------------------------------------------------------
 
     Rectangle {
         id: voicePill
 
-        readonly property bool shown: root.inVoice && !root.expanded
+        readonly property bool shown: root.inVoice && !root.expanded && !root.powerNotice
 
         x: pillHoverArea.x
         y: pillHoverArea.y
@@ -1297,7 +1766,7 @@ PanelWindow {
     Rectangle {
         id: screencastPill
 
-        readonly property bool shown: ScreencastService.active && !root.expanded
+        readonly property bool shown: ScreencastService.active && !root.expanded && !root.powerNotice
 
         // Lewa strona, lustrzanie do pigułki rozmowy po prawej.
         x: Math.round((root.width - root.collapsedWidth) / 2) - root.pillGap - width
