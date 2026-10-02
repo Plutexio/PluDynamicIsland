@@ -310,12 +310,16 @@ Singleton {
     // nie trafiało nigdy, więc kliknięcie po prostu nic nie kasowało.
     // QObject-y w środku kopii (notification, action) przeżywają konwersję jako
     // wskaźniki, stąd otwieranie wpisu działało mimo tego samego mechanizmu.
-    function removeEntry(entry) {
+    // keepOpen: wpis znika z historii, ale powiadomienie zostaje otwarte dla
+    // akcji, która zaraz na nim pójdzie (invoke() zamknie je sam). dismiss()
+    // przed invoke() zabierał akcję: aplikacja dostawała tylko
+    // NotificationClosed (zmierzone z notify-send -A: wychodził bez akcji).
+    function removeEntry(entry, keepOpen) {
         if (!entry) return;
         const id = entry.id;
 
         for (let i = 0; i < priv.history.length; i++)
-            if (priv.history[i].id === id && priv.history[i].notification)
+            if (priv.history[i].id === id && priv.history[i].notification && !keepOpen)
                 priv.history[i].notification.dismiss();
 
         if (priv.latest && priv.latest.id === id) priv.latest = null;

@@ -323,7 +323,7 @@ Item {
                                     onClicked: {
                                         const entry = card.latest;
                                         const action = modelData.action;
-                                        if (entry) NotificationService.removeEntry(entry);
+                                        if (entry) NotificationService.removeEntry(entry, true);
                                         action.invoke();
                                     }
                                 }
