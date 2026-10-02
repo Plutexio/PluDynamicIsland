@@ -57,6 +57,24 @@ PanelWindow {
     // że nie dobiegał nigdy, i to właśnie dawało wrażenie ospałości.
     property int spectrumSmoothingMs: 28
 
+    // Kolor widma z okładki (jak w iOS). Z palety okładki wygrywa kolor
+    // o największej chromie (max − min kanałów RGB, 0–1), a jego jasność
+    // i nasycenie HSL (0–1) są dociągane do zakresu czytelnego na czarnej
+    // pigułce. Przy dolnej granicy 0,62 czerwień robiła się różowa; górna
+    // nie daje bladym, prawie białym odcieniom wyjść na biało.
+    // Pas, którego najżywszy kolor ma chromę poniżej artGrayChroma, uchodzi
+    // za szary i bierze ŚREDNIĄ jasność pasa w granicach artGray*Lightness.
+    // Wcześniej szary pas dostawał na sztywno 0,88, więc ciemna okładka
+    // z odrobiną bieli dawała całe białe słupki.
+    property color spectrumFallbackColor: "#38d47a"
+    property real artAccentMinLightness: 0.55
+    property real artAccentMaxLightness: 0.72
+    property real artAccentMinSaturation: 0.5
+    property real artGrayChroma: 0.12
+    property real artGrayMinLightness: 0.5
+    property real artGrayMaxLightness: 0.8
+    property int artAccentFadeMs: 450
+
     // Przewijanie kart kółkiem. Jeden ząbek kółka to 120 jednostek angleDelta;
     // touchpad przysyła drobne porcje, które się sumują. Po przeskoku karty
     // kolejne zdarzenia są ignorowane przez wheelCooldownMs, żeby jedno
@@ -73,6 +91,15 @@ PanelWindow {
     // otwarcie nakładki nie przestawiało rozmiaru powierzchni layer-shella.
     property int overlayWidth: 620
     property int overlayHeight: 360
+
+    // Podgląd okładki: klik w okładkę na karcie muzyki rozciąga ją na całą
+    // wyspę. Kwadrat, bo okładki są kwadratowe — nic nie jest przycinane.
+    // Nie węższy niż karta muzyki (440): okładka leży na jej lewym skraju
+    // (−206…−134 px od środka), więc przy węższym podglądzie kursor, który
+    // właśnie w nią kliknął, wypadłby poza maskę i wyspa zwinęłaby się
+    // w chwili otwarcia. artPreviewMs to czas przelotu okładki na miejsce.
+    property int artPreviewSize: 440
+    property int artPreviewMs: 480
 
     // ---------------------------------------------------------------
     // Okno
@@ -103,7 +130,8 @@ PanelWindow {
     // akurat nie widać — z tego samego powodu: ani połączenie słuchawek, ani
     // otwarcie formularza nie ma przestawiać rozmiaru okna layer-shella.
     readonly property int maxCardHeight: Math.max(...cardHeights, airpods.implicitHeight,
-                                                  notifications.historyHeight, overlayHeight)
+                                                  notifications.historyHeight, overlayHeight,
+                                                  artPreviewSize)
     property int bottomReserve: 6
     implicitHeight: topMargin + maxCardHeight + bottomReserve + jobBarGap + jobBar.height
     color: "transparent"
@@ -282,10 +310,24 @@ PanelWindow {
 
     // Najechanie na wyspę w trakcie pokazywania paska: użytkownik chce kartę,
     // nie HUD. Bez tego pasek wracałby po zjechaniu kursorem, na resztę czasu.
+    // Zwinięcie zamyka podgląd okładki — inaczej następne najechanie
+    // otwierałoby od razu wielką okładkę zamiast karty.
     onExpandedChanged: if (expanded) {
         root.volumeNotice = false;
         root.powerNotice = false;
+    } else {
+        root.artPreview = false;
     }
+
+    // ---- podgląd okładki ----
+    // Tak jak nakładka, NIE jest kartą karuzeli (slot ma 440 px szerokości,
+    // a podgląd jest też wyższy). Pokazuje się tylko nad kartą muzyki:
+    // zmiana karty (kółko, powiadomienie, AirPodsy) go zamyka, a nie zostawia
+    // w tle do ponownego pojawienia się.
+    property bool artPreview: false
+    readonly property bool artPreviewShown: artPreview && expanded && !overlayOpen
+        && hasPlayer && currentKey === "music"
+    onCurrentKeyChanged: artPreview = false
 
     // ---- nakładki (Wi-Fi, Bluetooth) ----
     // "" | "wifi" | "bluetooth". Nakładka zastępuje pasek kart i rozciąga
@@ -457,8 +499,10 @@ PanelWindow {
     // Wyspa dopasowuje rozmiar do aktywnej karty.
     readonly property int collapsedWidth: 168
     readonly property int collapsedHeight: 34
-    readonly property int expandedWidth: overlayOpen ? overlayWidth : cardWidths[currentCard]
-    readonly property int expandedHeight: overlayOpen ? overlayHeight : cardHeights[currentCard]
+    readonly property int expandedWidth: overlayOpen ? overlayWidth
+        : artPreviewShown ? artPreviewSize : cardWidths[currentCard]
+    readonly property int expandedHeight: overlayOpen ? overlayHeight
+        : artPreviewShown ? artPreviewSize : cardHeights[currentCard]
 
     // ---- Discord ----
     readonly property bool inVoice: DiscordService.inVoice
@@ -650,6 +694,135 @@ PanelWindow {
         target: CavaService
         property: "wanted"
         value: root.isPlaying
+    }
+
+    // ---- kolor widma z okładki ----
+    // ColorQuantizer czyta TYLKO pliki lokalne: okładkę Spotify (https://)
+    // odrzuca z "Failed to load image". Dlatego okładkę wczytuje zwykły Image
+    // (ten sam rozmiar co miniaturka, więc bierze ją z bufora), zrzuca się do
+    // pliku i dopiero plik idzie do kwantyzatora. grabToImage działa też
+    // przy visible: false (zmierzone). Parametr w URL-u wymusza ponowne
+    // wczytanie, bo plik jest jeden, a ta sama ścieżka nie zmieniłaby `source`.
+    readonly property string artSamplePath: Quickshell.env("XDG_RUNTIME_DIR") + "/quickshell-island-art.png"
+    property int artSampleSerial: 0
+
+    // Do czasu policzenia koloru nowej okładki zostaje poprzedni — przejście
+    // przez zieleń przy każdej zmianie utworu wyglądałoby na mrugnięcie.
+    property color artAccent: spectrumFallbackColor
+    property bool artAccentValid: false
+    property color spectrumColor: artAccentValid && artUrl !== "" ? artAccent : spectrumFallbackColor
+
+    Behavior on spectrumColor { ColorAnimation { duration: root.artAccentFadeMs } }
+
+    function pickArtAccent(colors) {
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        let best = null;
+        let bestChroma = -1;
+        let lightness = 0;
+        for (const c of colors) {
+            const chroma = Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
+            if (chroma > bestChroma) {
+                best = c;
+                bestChroma = chroma;
+            }
+            lightness += c.hslLightness / colors.length;
+        }
+        if (best === null) return null;
+
+        if (bestChroma < root.artGrayChroma) {
+            // Przenosimy chromę, nie nasycenie HSL: prawie czarny #121116 ma
+            // w HSL nasycenie ~0,1 i po rozjaśnieniu wychodził fioletowy.
+            const l = clamp(lightness, root.artGrayMinLightness, root.artGrayMaxLightness);
+            return Qt.hsla(Math.max(0, best.hslHue),
+                           Math.min(1, bestChroma / (1 - Math.abs(2 * l - 1))), l, 1);
+        }
+        return Qt.hsla(best.hslHue,
+                       Math.max(root.artAccentMinSaturation, best.hslSaturation),
+                       clamp(best.hslLightness, root.artAccentMinLightness, root.artAccentMaxLightness), 1);
+    }
+
+    Image {
+        id: artSampler
+
+        visible: false
+        asynchronous: true
+        cache: true
+        sourceSize.width: 64
+        sourceSize.height: 64
+        source: root.artUrl
+
+        onStatusChanged: {
+            if (status !== Image.Ready) return;
+            const url = root.artUrl;
+            grabToImage(result => {
+                // Utwór zdążył się zmienić, zanim przyszedł zrzut.
+                if (url !== root.artUrl) return;
+                if (!result.saveToFile(root.artSamplePath)) return;
+                root.artSampleSerial++;
+            }, Qt.size(64, 64));
+        }
+    }
+
+    readonly property string artSampleUrl: artSampleSerial > 0
+        ? "file://" + artSamplePath + "?" + artSampleSerial
+        : ""
+
+    ColorQuantizer {
+        id: artQuantizer
+
+        // 8 kolorów. Median cut dzieli piksele na kubełki o podobnej liczności,
+        // więc kolejność nie mówi nic o dominacji — stąd wybór po chromie.
+        source: root.artSampleUrl
+        depth: 3
+        rescaleSize: 64
+
+        onColorsChanged: {
+            const accent = root.pickArtAccent(colors);
+            if (accent === null) return;
+            root.artAccent = accent;
+            root.artAccentValid = true;
+        }
+    }
+
+    // Każdy słupek widma ma kolor swojego pionowego pasa okładki, od lewej.
+    // imageRect jest w pikselach PLIKU, a zrzut ma rozmiar fizyczny (64 px
+    // × skala ekranu, na DP-1 109 px), więc szerokość bierzemy z wczytanego
+    // pliku. Sama średnia pasa (depth 0) wychodzi błotnista — z czterech
+    // kolorów pasa wygrywa najżywszy, tą samą regułą co akcent całości.
+    // Do policzenia nowych pasów zostają stare, jak przy artAccent.
+    property var barColors: []
+
+    Image {
+        id: artSample
+
+        visible: false
+        asynchronous: true
+        cache: false
+        source: root.artSampleUrl
+    }
+
+    Instantiator {
+        model: artSample.status === Image.Ready ? CavaService.barCount : 0
+
+        delegate: ColorQuantizer {
+            required property int index
+
+            readonly property real sliceWidth: artSample.implicitWidth / CavaService.barCount
+
+            source: root.artSampleUrl
+            imageRect: Qt.rect(Math.round(index * sliceWidth), 0,
+                               Math.round(sliceWidth), artSample.implicitHeight)
+            depth: 2
+            rescaleSize: 64
+
+            onColorsChanged: {
+                const color = root.pickArtAccent(colors);
+                if (color === null) return;
+                const next = root.barColors.slice();
+                next[index] = color;
+                root.barColors = next;
+            }
+        }
     }
 
     // MPRIS nie wysyła pozycji sam z siebie — trzeba go dopytać.
@@ -976,7 +1149,11 @@ PanelWindow {
                         width: 2
                         radius: 1
                         antialiasing: true
-                        color: root.isPlaying ? "#38d47a" : "#4a4a4f"
+                        color: !root.isPlaying ? "#4a4a4f"
+                            : (root.artUrl !== "" && root.barColors[index] !== undefined)
+                                ? root.barColors[index] : root.spectrumColor
+
+                        Behavior on color { ColorAnimation { duration: root.artAccentFadeMs } }
 
                         // Minimum 3 px, żeby w ciszy została czytelna kreska,
                         // a nie znikające słupki.
@@ -999,7 +1176,7 @@ PanelWindow {
             Rectangle {
                 width: 6; height: 6; radius: 3
                 antialiasing: true
-                color: root.isPlaying ? "#38d47a" : "#4a4a4f"
+                color: root.isPlaying ? root.spectrumColor : "#4a4a4f"
                 visible: root.hasPlayer && !CavaService.available
                 Layout.alignment: Qt.AlignVCenter
 
@@ -1047,41 +1224,58 @@ PanelWindow {
             // zostaje w środku przez cały czas rozciągania.
             x: (island.width - root.slotWidth) / 2 - stripOffset
 
-            opacity: (root.expanded && !root.overlayOpen) ? 1 : 0
+            readonly property bool shown: root.expanded && !root.overlayOpen && !root.artPreviewShown
+            opacity: shown ? 1 : 0
             visible: opacity > 0.01
 
             Behavior on opacity {
                 NumberAnimation {
-                    duration: root.expanded ? 380 : 130
+                    duration: cardStrip.shown ? 380 : 130
                     easing.type: Easing.OutCubic
                 }
             }
 
             // ---- karta: muzyka ----
             Item {
+                id: musicSlot
+
                 x: root.cardMusic * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
 
                 // Z odtwarzaczem: okładka, tytuł, postęp, kontrolki.
                 Item {
+                    id: musicCard
+
                     anchors.centerIn: parent
                     width: root.cardWidths[root.cardMusic]
                     height: root.cardHeights[root.cardMusic]
                     visible: root.hasPlayer
 
                     RowLayout {
+                        id: musicRow
+
                         anchors.fill: parent
                         anchors.margins: 14
                         anchors.bottomMargin: 16
                         spacing: 13
 
                         IslandClip {
+                            id: musicArt
+
                             Layout.preferredWidth: 72
                             Layout.preferredHeight: 72
                             Layout.alignment: Qt.AlignVCenter
                             radius: 17
                             color: "#17171a"
+
+                            // Podgląd rysuje w tym miejscu własną kopię okładki
+                            // i z niego startuje, więc ta chowa się na czas lotu.
+                            opacity: artPreviewLayer.visible ? 0 : 1
+                            scale: artClick.pressed ? 0.94 : 1
+                            Behavior on scale {
+                                NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+                            }
 
                             IslandIcon {
                                 anchors.centerIn: parent
@@ -1100,6 +1294,17 @@ PanelWindow {
                                 sourceSize.width: 144
                                 sourceSize.height: 144
                                 source: root.artUrl
+                            }
+
+                            // Bez hovera, więc nie zabiera go podkładce i nie musi
+                            // trafiać do controlsHovered. Klik nie przypina wyspy —
+                            // MouseArea wyspy leży niżej i go nie dostaje.
+                            MouseArea {
+                                id: artClick
+                                anchors.fill: parent
+                                enabled: art.status === Image.Ready
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.artPreview = true
                             }
                         }
 
@@ -1479,6 +1684,170 @@ PanelWindow {
                     Behavior on color {
                         ColorAnimation { duration: 200 }
                     }
+                }
+            }
+        }
+
+        // ---- podgląd okładki ------------------------------------------
+        // Okładka wylatuje z miejsca, w którym stoi na karcie muzyki, i rośnie
+        // do rozmiaru całej wyspy (w zamknięciu wraca tą samą drogą). Oba końce
+        // są powiązaniami, nie migawką z mapToItem: wyspa w tym czasie sama
+        // zmienia rozmiar, a karta muzyki jedzie za jej środkiem. Pozycja
+        // okładki w wyspie to suma x/y rodziców, bo mapToItem nie jest
+        // zależnością i nie przeliczyłby się w trakcie animacji.
+        Item {
+            id: artPreviewLayer
+
+            anchors.fill: parent
+
+            property real progress: root.artPreviewShown ? 1 : 0
+            Behavior on progress {
+                NumberAnimation { duration: root.artPreviewMs; easing.type: Easing.OutCubic }
+            }
+
+            visible: progress > 0.001
+            // Zwinięcie wyspy w trakcie podglądu: okładka gaśnie razem
+            // z kartami, zamiast lecieć do karty, której już nie widać.
+            opacity: root.expanded ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+
+            readonly property real fromX: cardStrip.x + musicSlot.x + musicCard.x + musicRow.x + musicArt.x
+            readonly property real fromY: cardStrip.y + musicSlot.y + musicCard.y + musicRow.y + musicArt.y
+
+            function lerp(a, b) { return a + (b - a) * progress; }
+
+            IslandClip {
+                id: previewArt
+
+                x: artPreviewLayer.lerp(artPreviewLayer.fromX, 0)
+                y: artPreviewLayer.lerp(artPreviewLayer.fromY, 0)
+                width: artPreviewLayer.lerp(musicArt.width, island.width)
+                height: artPreviewLayer.lerp(musicArt.height, island.height)
+                radius: artPreviewLayer.lerp(musicArt.radius, island.radius)
+                color: "#17171a"
+
+                // Najpierw miniaturka z karty (ten sam rozmiar źródła, więc
+                // z bufora, od razu), nad nią pełna rozdzielczość, gdy dojdzie —
+                // inaczej lot zaczynałby się od pustego kwadratu.
+                Image {
+                    anchors.fill: parent
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    cache: true
+                    sourceSize.width: 144
+                    sourceSize.height: 144
+                    source: root.artUrl
+                }
+
+                Image {
+                    id: previewArtFull
+                    anchors.fill: parent
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    cache: true
+                    sourceSize.width: root.artPreviewSize * 2
+                    sourceSize.height: root.artPreviewSize * 2
+                    // Duża wersja tylko przy otwartym podglądzie — to kilka MB
+                    // w pamięci na każdą okładkę, której nikt nie ogląda.
+                    source: artPreviewLayer.visible ? root.artUrl : ""
+                    opacity: status === Image.Ready ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+                }
+
+                // Przyciemnienie pod tekstem — okładka bywa jasna u dołu.
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: parent.height * 0.42
+                    opacity: previewInfo.opacity
+                    gradient: Gradient {
+                        GradientStop { position: 0; color: Qt.rgba(0, 0, 0, 0) }
+                        GradientStop { position: 1; color: Qt.rgba(0, 0, 0, 0.78) }
+                    }
+                }
+
+                // Treść o stałej szerokości (docelowej), przypięta do dołu:
+                // w trakcie lotu nie przelicza się elide, tylko wyłania.
+                ColumnLayout {
+                    id: previewInfo
+
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 20
+                    anchors.bottomMargin: 18
+                    width: root.artPreviewSize - 40
+                    spacing: 2
+
+                    // Wchodzi pod koniec lotu, wychodzi od razu na starcie powrotu.
+                    opacity: Math.max(0, (artPreviewLayer.progress - 0.6) / 0.4)
+
+                    Text {
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        text: root.trackTitle
+                        color: "#ffffff"
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        text: root.trackArtist
+                        color: Qt.rgba(1, 1, 1, 0.72)
+                        font.pixelSize: 13
+                        visible: root.trackArtist !== ""
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 8
+                        spacing: 8
+                        visible: root.hasProgress
+
+                        Text {
+                            text: root.formatTime(root.hasPlayer ? root.player.position : 0)
+                            color: Qt.rgba(1, 1, 1, 0.7)
+                            font.pixelSize: 10
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 3
+                            Layout.alignment: Qt.AlignVCenter
+                            radius: 1.5
+                            antialiasing: true
+                            color: Qt.rgba(1, 1, 1, 0.22)
+
+                            Rectangle {
+                                width: parent.width * root.progress
+                                height: parent.height
+                                radius: parent.radius
+                                antialiasing: true
+                                color: "#ffffff"
+
+                                Behavior on width {
+                                    NumberAnimation { duration: 450; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.formatTime(root.trackLength)
+                            color: Qt.rgba(1, 1, 1, 0.7)
+                            font.pixelSize: 10
+                        }
+                    }
+                }
+
+                // Klik w podgląd wraca do karty. Tylko przy otwartym — w trakcie
+                // powrotu klik ma trafiać w kartę, która już się wyłania.
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: root.artPreviewShown
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.artPreview = false
                 }
             }
         }

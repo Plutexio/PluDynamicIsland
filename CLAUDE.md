@@ -334,6 +334,45 @@ Przeglądarki wystawiają **dwa** wpisy MPRIS dla jednej karty (surowy Brave i
 gra (4) + ma tytuł (2) + ma okładkę (1), remis wygrywa wcześniejszy. Nie zmieniaj
 tego na „pierwszy z listy" ani „pierwszy grający".
 
+### Podgląd okładki
+
+Klik w okładkę na karcie muzyki (`artPreview`) rozciąga ją na całą wyspę
+(`artPreviewSize` × `artPreviewSize`, kwadrat). Jak nakładka — **nie jest kartą**,
+tylko podmienia `expandedWidth/Height` i gasi `cardStrip`. Zamyka go klik
+w podgląd, zwinięcie wyspy i każda zmiana `currentKey` (kółko, powiadomienie).
+
+- Podgląd **nie może być węższy niż karta muzyki** (440): okładka leży na jej
+  lewym skraju (−206…−134 px od środka) i kursor, który w nią kliknął, wypadłby
+  poza maskę — wyspa zwinęłaby się w chwili otwarcia.
+- Lot okładki interpoluje między jej miejscem na karcie a całą wyspą. Punkt
+  startowy to **suma `x`/`y` rodziców** (`cardStrip` → `musicSlot` → `musicCard`
+  → `musicRow` → `musicArt`), nie `mapToItem` — ten nie jest powiązaniem, a obie
+  strony ruszają się w trakcie animacji wyspy.
+
+### Kolor widma z okładki
+
+Słupki widma (i zapasowa kropka) grają w kolorze okładki (`spectrumColor`),
+na pauzie są szare, bez okładki zielone (`spectrumFallbackColor`).
+`ColorQuantizer` Quickshella czyta **tylko pliki lokalne** — okładkę Spotify
+(`https://i.scdn.co/...`) odrzuca z `Failed to load image`. Dlatego niewidoczny
+`artSampler` (`Image`) wczytuje okładkę, `grabToImage` zapisuje ją do
+`$XDG_RUNTIME_DIR/quickshell-island-art.png` (działa przy `visible: false`),
+a kwantyzator dostaje plik z `?numer` w URL-u, żeby ta sama ścieżka wczytała
+się od nowa. Median cut daje kubełki o podobnej liczności, więc z palety
+wygrywa kolor o największej chromie, dociągany potem do czytelnej jasności.
+Pas bez wyraźnego koloru bierze **średnią jasność pasa**, nie biel: stała
+jasność 0,88 robiła z ciemnej okładki z odrobiną bieli całe białe słupki.
+W szarym pasie przenosi się chromę, nie nasycenie HSL — prawie czarny kolor
+ma w HSL zawyżone nasycenie i po rozjaśnieniu wychodził fioletowy.
+
+Każdy słupek ma kolor swojego pionowego pasa okładki (`barColors`, jeden
+`ColorQuantizer` z `imageRect` na słupek). `imageRect` jest w pikselach
+**pliku**, a zrzut ma rozmiar fizyczny: `grabToImage(…, Qt.size(64, 64))` daje
+109 px przy skali 1,7. Szerokość pasa bierze się więc z wczytanego pliku
+(`artSample.implicitWidth`), nie z 64. Akcent całej okładki (`spectrumColor`)
+zostaje dla kropki zapasowej i jako kolor słupka, którego pas nie jest jeszcze
+policzony.
+
 ### CavaService
 
 Singleton nad podprocesem `cava` w trybie `raw` (Quickshell nie ma własnego FFT).
