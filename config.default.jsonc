@@ -1,0 +1,166 @@
+// =====================================================================
+//  PluDynamicIsland — konfiguracja
+// =====================================================================
+//
+//  Twoja kopia: ~/.config/PluDynamicIsland/config.jsonc
+//  (wyspa tworzy ją z tego pliku przy pierwszym starcie).
+//
+//  - Zmiany działają od razu po zapisie, bez restartu wyspy.
+//  - Komentarze (// i /* */) oraz przecinek po ostatnim elemencie są dozwolone.
+//  - Brakujące ustawienie = wartość domyślna z tego pliku. Możesz więc
+//    zostawić w swojej kopii tylko to, co zmieniasz.
+//  - Błędy (literówka w nazwie, zły typ, wartość spoza zakresu) wyspa
+//    wypisuje w logu jako WARN [config] i bierze wtedy wartość domyślną.
+//  - Nowe opcje z aktualizacji nie dopiszą się same do Twojej kopii —
+//    pełna, aktualna lista jest zawsze w config.default.jsonc w projekcie.
+//
+//  Czasy są w milisekundach (1000 = 1 s), kolory jako "#rrggbb"
+//  albo "#aarrggbb".
+//
+//  Sekrety Discorda zostają osobno w discord.json, a przełącznik pauzy
+//  AirPodsów w airpods.json (zmienia go karta AirPodsów).
+
+{
+    // ---- ogólne ------------------------------------------------------
+    "general": {
+        // Monitor, na którym stoi wyspa. "" = automat (ekran w punkcie 0,0).
+        // Nazwy: `hyprctl monitors` (Hyprland), `kscreen-doctor -o` (KDE).
+        "screen": "",
+
+        // Język nazw dni i miesięcy na karcie zegara, np. "pl_PL", "en_US".
+        "locale": "pl_PL",
+
+        // Odstęp wyspy od górnej krawędzi ekranu, px.
+        "topMargin": 8,
+
+        // Animacje w pętli: puls obwódki przy ładowaniu i kropek rozmowy /
+        // udostępniania. Każda klatka takiej animacji to przerysowanie całego
+        // ekranu — na słabszym GPU (laptop, 4K) potrafi to lagować pulpit.
+        // "auto" = na desktopie tak, na laptopie nie | "on" | "off"
+        "loopAnimations": "auto"
+    },
+
+    // ---- karty -------------------------------------------------------
+    "cards": {
+        // Karty do ukrycia z karuzeli, np. ["discord", "connectivity"].
+        // Do wyboru: "music", "discord", "clock", "connectivity",
+        // "notifications", "airpods". Ukrycie karty nie wyłącza usługi
+        // (powiadomienia dalej trafiają do historii, mostek Discorda dalej
+        // chodzi), tylko jej widok i auto-rozwinięcia na nią.
+        "hidden": []
+    },
+
+    // ---- rozwijanie --------------------------------------------------
+    "expand": {
+        // Ile ms po zjechaniu kursorem wyspa się zwija.
+        "collapseDelay": 220,
+
+        // Samoczynne rozwinięcie na chwilę: czy, i na ile ms.
+        "onTrackChange": true,      // zmiana utworu / play-pauza -> karta muzyki
+        "trackChangeMs": 3200,
+        "onNotification": true,     // nowe powiadomienie -> karta powiadomień
+        "notificationMs": 4500,
+        "onTransfer": true,         // start kopiowania / pobierania pliku
+        "transferMs": 3000,
+        "onAirPods": true,          // połączenie AirPodsów -> karta AirPodsów
+        "airPodsMs": 3500,
+
+        // Po przeskoku karty kółkiem kolejne zdarzenia są ignorowane przez
+        // tyle ms — jedno machnięcie touchpadem nie przeskoczy dwóch kart.
+        "wheelCooldownMs": 260
+    },
+
+    // ---- zegar -------------------------------------------------------
+    // Formaty Qt: HH = godzina 00–23, h = 1–12, mm = minuty, ss = sekundy,
+    // AP = AM/PM, d = dzień, dddd = nazwa dnia, MMMM = nazwa miesiąca.
+    "clock": {
+        "pillFormat": "HH:mm",           // zwinięta pigułka (szerokość pigułki jest stała!)
+        "cardFormat": "HH:mm:ss",        // karta zegara
+        "dateFormat": "dddd, d MMMM"     // data pod zegarem na karcie
+    },
+
+    // ---- widmo dźwięku (cava) ----------------------------------------
+    "spectrum": {
+        // Liczba słupków w pigułce, 1–12.
+        "bars": 5,
+
+        // Klatki na sekundę. 0 = auto (60 na desktopie, 30 na laptopie).
+        // Każda klatka to przerysowanie ekranu, póki gra muzyka.
+        "framerate": 0,
+
+        // Wygładzanie cavy, 0–100. Niżej = żywiej i nerwowo, wyżej = leniwie.
+        "noiseReduction": 35,
+
+        // Dogładzanie wysokości słupka między klatkami, ms (tylko przy 60+ fps).
+        "smoothingMs": 28,
+
+        // Kolory słupków z okładki utworu (jak w iOS). false = zawsze fallbackColor.
+        "colorFromArt": true,
+        "fallbackColor": "#38d47a",
+
+        // Czas przejścia koloru przy zmianie okładki, ms.
+        "colorFadeMs": 450,
+
+        // Ile ms trzymać cavę przy życiu po pauzie, zanim proces zostanie zamknięty.
+        "lingerMs": 5000
+    },
+
+    // ---- bateria (tylko laptop) --------------------------------------
+    "battery": {
+        // Obwódka wokół zwiniętej pigułki pokazująca poziom baterii.
+        "ring": true,
+        "ringWidth": 2,                  // grubość linii, px
+        "lowLevel": 0.2,                 // poniżej tego (0–1) bez ładowania = lowColor
+        "color": "#f2f2f2",              // na baterii
+        "chargingColor": "#30d158",      // na zasilaczu
+        "lowColor": "#ff453a",           // niski poziom
+
+        // Puls przy ładowaniu (tylko gdy loopAnimations jest włączone):
+        // pełny cykl w ms i jasność w najciemniejszym punkcie (0–1).
+        "pulseMs": 2400,
+        "pulseMin": 0.35,
+
+        // Podłączenie / odłączenie ładowarki poszerza na chwilę pigułkę.
+        "chargerNotice": true,
+        "chargerNoticeMs": 2600
+    },
+
+    // ---- głośność ----------------------------------------------------
+    "volume": {
+        // Zmiana głośności spoza wyspy (klawisze, pavucontrol) pokazuje na
+        // chwilę pasek w zwiniętej pigułce.
+        "notice": true,
+        "noticeMs": 1400,
+
+        // Krok jednego ząbka kółka nad pigułką wyjścia dźwięku (0–1, 0.03 = 3%).
+        "step": 0.03
+    },
+
+    // ---- małe pigułki obok wyspy -------------------------------------
+    "pills": {
+        "voice": true,          // rozmowa na Discordzie: kanał + czas
+        "screencast": true,     // udostępnianie ekranu: aplikacja + czas
+        "gap": 8,               // odstęp od wyspy, px
+        "maxWidth": 200         // dłuższe nazwy są obcinane, px
+    },
+
+    // ---- powiadomienia -----------------------------------------------
+    "notifications": {
+        // Ile wpisów trzyma historia.
+        "historyLimit": 30,
+
+        // Po tylu ms dymek schodzi z karty (wpis zostaje w historii).
+        "popupMs": 5000
+    },
+
+    // ---- łączność ----------------------------------------------------
+    "bluetooth": {
+        // Skanowanie w nakładce samo się kończy po tylu ms (zjada radio).
+        "scanMs": 30000
+    },
+
+    "wifi": {
+        // Po tylu ms bez połączenia próba uchodzi za nieudaną.
+        "connectTimeoutMs": 25000
+    }
+}

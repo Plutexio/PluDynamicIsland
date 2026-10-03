@@ -52,7 +52,7 @@ Singleton {
     readonly property bool muted: volumeReady && current.audio.muted
 
     // O ile zmienia głośność jeden ZĄBEK kółka (nie pojedyncze zdarzenie).
-    property real volumeStep: 0.03
+    readonly property real volumeStep: IslandConfig.volume.step   // config.jsonc
 
     // Jeden ząbek myszy to 120 jednostek angleDelta. Touchpad przysyła zamiast
     // tego drobne porcje po kilka-kilkanaście jednostek, więc trzeba je

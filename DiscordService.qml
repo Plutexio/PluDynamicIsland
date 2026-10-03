@@ -32,7 +32,7 @@ Singleton {
     readonly property alias elapsedSeconds: priv.elapsedSeconds
 
     // Gdzie mostek szuka client_id / client_secret — do komunikatu dla użytkownika.
-    readonly property string configPath: Quickshell.env("HOME") + "/.config/quickshell-island/discord.json"
+    readonly property string configPath: IslandConfig.configDir + "/discord.json"
 
     QtObject {
         id: priv

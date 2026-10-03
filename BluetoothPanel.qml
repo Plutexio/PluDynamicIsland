@@ -19,7 +19,7 @@ Item {
 
     property int listWidth: 264
     property int rowHeight: 34
-    property int scanDurationMs: 30000   // skanowanie samo się kończy, żeby nie zjadać radia
+    readonly property int scanDurationMs: IslandConfig.bluetooth.scanMs   // skanowanie samo się kończy, żeby nie zjadać radia
 
     implicitWidth: 620
     implicitHeight: 360

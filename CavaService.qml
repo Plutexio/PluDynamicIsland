@@ -13,19 +13,21 @@ Singleton {
     // Ustawienia
     // ---------------------------------------------------------------
 
-    property int barCount: 5
+    // Ustawienia z config.jsonc (IslandConfig, sekcja "spectrum").
+    readonly property int barCount: IslandConfig.spectrum.bars
 
     // 60 fps zamiast 30 to nie tylko płynniejszy rysunek — własny filtr cavy
     // liczy się per klatka, więc podniesienie framerate samo w sobie
     // przyspiesza reakcję słupków (zmierzone: 66 -> 117 punktów zmiany/s).
-    property int framerate: 60
+    // Domyślnie per maszyna (IslandConfig) — na laptopie 30.
+    readonly property int framerate: IslandConfig.cavaFramerate
 
     // Wygładzanie po stronie cavy (filtry integral + gravity), 0-100.
     // Domyślne cavy to 77 i wygląda zaspanie. 35 daje ~2,8x wiecej życia,
     // a skok między klatkami trzyma w okolicy 3 punktów, więc słupki
     // nie zaczynają migotać. Niżej = szybciej i nerwowo, wyżej = leniwie.
-    property int noiseReduction: 35
-    property int lingerMs: 5000     // ile trzymać cavę przy życiu po zatrzymaniu muzyki
+    readonly property int noiseReduction: IslandConfig.spectrum.noiseReduction
+    readonly property int lingerMs: IslandConfig.spectrum.lingerMs   // ile trzymać cavę przy życiu po zatrzymaniu muzyki
 
     // ---------------------------------------------------------------
     // Stan
@@ -47,6 +49,7 @@ Singleton {
         property int failures: 0
         property double startedAt: 0
         property bool stopRequested: false
+        property bool restartRequested: false
         property string lastError: ""
     }
 
@@ -72,6 +75,24 @@ Singleton {
         id: linger
         interval: root.lingerMs
         onTriggered: root.stopCava()
+    }
+
+    // Konfig cavy powstaje przy starcie procesu, więc każda zmiana jego
+    // parametrów (edycja config.jsonc, UPower rozpoznający laptopa ~1 s po
+    // starcie) wymaga restartu. Start dopiero w onExited — przestawienie
+    // `running` na true, zanim stary proces zejdzie, nic by nie dało.
+    function restartForConfig() {
+        if (!proc.running) return;
+        priv.restartRequested = true;
+        stopCava();
+    }
+    onFramerateChanged: restartForConfig()
+    onNoiseReductionChanged: restartForConfig()
+    // Stara cava dalej przysyła ramki ze starą liczbą słupków, a parser
+    // odrzuca każdą o złej długości — słupki zamarłyby do restartu.
+    onBarCountChanged: {
+        priv.levels = new Array(barCount).fill(0);
+        restartForConfig();
     }
 
     onWantedChanged: {
@@ -157,6 +178,10 @@ exec cava -p "$conf"
             // Sami o to poprosiliśmy — nic się nie stało.
             if (priv.stopRequested) {
                 priv.stopRequested = false;
+                if (priv.restartRequested) {
+                    priv.restartRequested = false;
+                    if (root.wanted && priv.available) proc.running = true;
+                }
                 return;
             }
 

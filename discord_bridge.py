@@ -16,7 +16,7 @@ i się rozjechały. Ten skrypt tłumaczy ramki na JSON linia po linii:
 Jednorazowa konfiguracja:
   1. discord.com/developers -> New Application -> skopiuj Client ID.
   2. Zakładka OAuth2 -> Redirects -> dodaj  http://localhost  -> skopiuj Client Secret.
-  3. Zapisz ~/.config/quickshell-island/discord.json:
+  3. Zapisz ~/.config/PluDynamicIsland/discord.json:
        {"client_id": "...", "client_secret": "..."}
   4. Przy pierwszym połączeniu Discord może pokazać okno zgody. Token ląduje obok,
      w discord_token (0600), i jest używany przy kolejnych startach.
@@ -41,9 +41,13 @@ import urllib.request
 # Ustawienia
 # ---------------------------------------------------------------
 
-CONFIG_DIR = os.path.expanduser("~/.config/quickshell-island")
+CONFIG_DIR = os.path.expanduser("~/.config/PluDynamicIsland")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "discord.json")
 TOKEN_PATH = os.path.join(CONFIG_DIR, "discord_token")
+# Dawny katalog. Pliki Discorda przenosi stąd sam mostek przy starcie: bez
+# tego aktualizacja zgubiłaby sekret i token, a zgubiony token to nowe okno
+# zgody w Discordzie.
+LEGACY_DIR = os.path.expanduser("~/.config/quickshell-island")
 
 SOCKET_RETRY_S = 5       # co ile szukać gniazda, gdy Discord nie działa
 AUTH_FAIL_WAIT_S = 60    # przerwa po dwóch nieudanych autoryzacjach z rzędu
@@ -91,6 +95,29 @@ def log(text):
 # ---------------------------------------------------------------
 # Konfiguracja i token
 # ---------------------------------------------------------------
+
+def migrate_legacy():
+    """Przenosi discord.json i discord_token z LEGACY_DIR, jeśli w nowym ich brak."""
+    moved = []
+    for name in ("discord.json", "discord_token"):
+        old = os.path.join(LEGACY_DIR, name)
+        new = os.path.join(CONFIG_DIR, name)
+        if not os.path.exists(old) or os.path.exists(new):
+            continue
+        try:
+            os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+            os.replace(old, new)
+            moved.append(name)
+        except OSError as e:
+            log(f"nie udało się przenieść {old}: {e}")
+    if moved:
+        log(f"przeniesiono {', '.join(moved)} z {LEGACY_DIR} do {CONFIG_DIR}")
+    # Pusty stary katalog sprzątamy; z czymkolwiek w środku zostaje.
+    try:
+        os.rmdir(LEGACY_DIR)
+    except OSError:
+        pass
+
 
 def load_config():
     try:
@@ -520,6 +547,7 @@ class Bridge:
 
 
 def main():
+    migrate_legacy()
     cfg = load_config()
     if cfg is None:
         set_state(error="brak konfiguracji")

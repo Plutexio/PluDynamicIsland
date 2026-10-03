@@ -71,10 +71,10 @@ Powiadomienia i tak trafiają do historii, tylko nie widać dymka.
 - **Przy zmianie utworu lub play/pauzie** — rozwija się sama na ~3 s na karcie
   muzyki, jak powiadomienie w iOS.
 - **Podczas rozmowy na Discordzie** — obok zwiniętej pigułki stoi druga, mała:
-  pulsująca kropka, nazwa kanału, timer i ikona wyciszenia. Najechanie na nią
+  zielona kropka, nazwa kanału, timer i ikona wyciszenia. Najechanie na nią
   rozwija wyspę od razu na karcie Discorda.
 - **Podczas udostępniania ekranu** — po lewej od zwiniętej pigułki stoi
-  informacyjna pigułka z czerwoną pulsującą kropką, nazwą aplikacji, która
+  informacyjna pigułka z czerwoną kropką, nazwą aplikacji, która
   odbiera ekran, i timerem. Nie reaguje na kursor.
 
 ### Karty
@@ -158,7 +158,7 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 
 | Plik | Rola |
 | --- | --- |
-| `shell.qml` | Punkt wejścia; wybór monitora (`islandScreen`). |
+| `shell.qml` | Punkt wejścia; wybór monitora (`general.screen` z konfiguracji). |
 | `DynamicIsland.qml` | Samo okno wyspy: stan, animacje, oba widoki. |
 | `IslandButton.qml` | Okrągły przycisk sterowania (hover: pierścień + powiększenie). |
 | `IslandIcon.qml` | Ikony (play/pause/next/prev, mikrofon, słuchawki, rozłącz, logo Discorda) rysowane wektorowo (`QtQuick.Shapes`). |
@@ -182,6 +182,8 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 | `IslandDropdown.qml` | Lista wyboru (zabezpieczenia, metoda EAP); stanu sama nie zmienia. |
 | `IslandCheckbox.qml` | Pole wyboru z podpisem. |
 | `IslandTextButton.qml` | Przycisk z napisem („Połącz", „Sparuj") z wariantem `busy`. |
+| `IslandConfig.qml` | Singleton: konfiguracja użytkownika z `config.jsonc` (parser JSONC, walidacja, przeładowanie na żywo). |
+| `config.default.jsonc` | Domyślne wartości i opis wszystkich opcji; szablon kopii w `~/.config`. |
 | `HyprlandShortcut.qml` | Skrót globalny Hyprlanda, ładowany Loaderem tylko tam, gdzie protokół istnieje. |
 | `AirPodsService.qml` | Singleton: bateria, czujnik ucha i tryb redukcji hałasu AirPodsów przez mostek. |
 | `AirPodsCard.qml` | Karta AirPodsów: baterie L / P / etui i przełącznik trybu hałasu. |
@@ -191,7 +193,7 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 
 ## Wybór monitora
 
-W `shell.qml`, właściwość `islandScreen` (domyślnie `""` = wybór automatyczny).
+W `config.jsonc`: `"general": { "screen": "DP-1" }` (domyślnie `""` = wybór automatyczny).
 
 Quickshell nie zna pojęcia „monitora głównego" — Wayland go nie ma — a kolejność
 `Quickshell.screens` **nie** odpowiada priorytetom kompozytora (na desktopie z KDE
@@ -208,23 +210,63 @@ w punkcie `(0,0)`, a w ostateczności na pierwszy z listy — nie znika.
 
 ## Ustawienia
 
+Wszystko, co da się sensownie zmieniać bez grzebania w kodzie, siedzi w
+**`~/.config/PluDynamicIsland/config.jsonc`** — poza projektem, więc zmiany
+nie ruszają plików w gicie, a laptop i desktop mają własne wartości.
+
+- Najwygodniej: **Ustawienia PluDE → Wyspa** (`~/PluDE`). Strona zmienia
+  pojedyncze wartości w pliku i zostawia Twoje komentarze.
+- Plik tworzy się sam przy pierwszym starcie jako kopia
+  [`config.default.jsonc`](config.default.jsonc) — z opisem każdej opcji.
+- Zmiany działają **od razu po zapisie**, bez restartu wyspy.
+- Komentarze `//` i `/* */` oraz przecinek po ostatnim elemencie są dozwolone.
+- Brakujący klucz = wartość domyślna, więc wystarczy zostawić to, co zmieniasz:
+
+  ```jsonc
+  {
+      "cards": { "hidden": ["discord"] },
+      "clock": { "pillFormat": "h:mm AP" },
+      "spectrum": { "bars": 8, "colorFromArt": false }
+  }
+  ```
+
+- Błąd składni → `WARN [config] …config.jsonc:12:5: brak przecinka po "bars"`
+  i wyspa zostaje przy poprzedniej działającej konfiguracji. Nieznany klucz,
+  zły typ, wartość spoza zakresu albo zły kolor → ostrzeżenie i wartość
+  domyślna tylko dla tego jednego klucza.
+- Nowe opcje z aktualizacji projektu **nie dopisują się** do istniejącej kopii
+  (działają z wartością domyślną). Pełna lista jest zawsze w
+  `config.default.jsonc`; usunięcie kopii każe wyspie zapisać świeżą.
+
+Sekcje: `general` (monitor, język, odstęp od góry, animacje w pętli), `cards`
+(ukrywanie kart), `expand` (auto-rozwinięcia: czy i na ile), `clock` (formaty),
+`spectrum` (słupki, fps, wygładzanie, kolor z okładki), `battery` (obwódka,
+kolory, puls, poszerzenie przy ładowarce), `volume`, `pills` (pigułki rozmowy
+i udostępniania), `notifications`, `bluetooth`, `wifi`.
+
+Poza plikiem zostały: sekrety Discorda (`discord.json`), przełącznik pauzy
+AirPodsów (`airpods.json`, zmienia go karta — plik z komentarzami nie dałby się
+nadpisać z wyspy bez ich utraty) i geometria (rozmiary kart, slotów i nakładek,
+na górze `DynamicIsland.qml`), bo jej zmiana wymaga przeliczenia reszty układu.
+
+### Animacje w pętli (`general.loopAnimations`)
+
+`"auto"` = tak na desktopie, nie na laptopie (bateria z UPower); `"on"` / `"off"`
+wymusza. Dotyczy pulsu obwódki przy ładowaniu i kropek (rozmowa, udostępnianie,
+awaryjna kropka muzyki); wyłączone świecą stałym kolorem. Każda klatka takiej
+animacji to przerysowanie całego ekranu w kompozytorze. Zmierzone na laptopie
+(Intel UHD 630, 4K, Hyprland z rozmyciem): puls obwódki trzymał GPU na 74%
+zajętości, bez niego 11%. Z tego samego powodu `spectrum.framerate` = 0 daje
+60 fps na desktopie i 30 na laptopie.
+
+### Geometria (w kodzie)
+
 Na górze `DynamicIsland.qml`:
 
 | Właściwość | Domyślnie | Znaczenie |
 | --- | --- | --- |
-| `uiLocale` | `"pl_PL"` | Język daty w widoku zegara. |
-| `topMargin` | `8` | Odstęp od górnej krawędzi ekranu. |
-| `collapseDelay` | `220` | Opóźnienie zwijania po zjechaniu myszką (ms). |
-| `noticeDuration` | `3200` | Czas auto-rozwinięcia przy zmianie utworu (ms). |
-| `notificationDuration` | `4500` | Czas auto-rozwinięcia przy nowym powiadomieniu (ms). |
-| `jobNoticeDuration` | `3000` | Czas auto-rozwinięcia na starcie transferu plików (ms). |
-| `airPodsNoticeDuration` | `3500` | Czas auto-rozwinięcia po połączeniu AirPodsów (ms). |
-| `volumeNoticeDuration` | `1400` | Jak długo zwinięta pigułka pokazuje pasek głośności (ms). |
 | `jobBarGap` | `4` | Przerwa między wyspą a paskiem postępu pod nią (px). |
 | `wheelStepDelta` | `120` | Ile `angleDelta` kółka na jedną kartę (120 = jeden ząbek). |
-| `wheelCooldownMs` | `260` | Blokada kolejnego przeskoku po zmianie karty (ms). |
-| `pillGap` | `8` | Odstęp pigułek (rozmowa, udostępnianie) od wyspy (px). |
-| `pillMaxWidth` | `200` | Maksymalna szerokość pigułek; dłuższe nazwy kanałów / aplikacji są obcinane. |
 | `overlayWidth` | `620` | Szerokość nakładek Wi‑Fi / Bluetooth (px). |
 | `overlayHeight` | `360` | Wysokość nakładek (px); wchodzi do wysokości okna zawsze, także przy zamkniętej nakładce. |
 
@@ -249,14 +291,14 @@ gniazdo, którego używają gry do „Rich Presence"). Działa z natywnym klient
    *New Application* → skopiuj **Client ID**.
 2. Zakładka *OAuth2* → *Redirects* → dodaj `http://localhost` → skopiuj
    **Client Secret**.
-3. Zapisz `~/.config/quickshell-island/discord.json` (uprawnienia `0600`):
+3. Zapisz `~/.config/PluDynamicIsland/discord.json` (uprawnienia `0600`):
 
    ```json
    {"client_id": "...", "client_secret": "..."}
    ```
 
 4. Przy pierwszym połączeniu Discord pokaże **okno zgody** — kliknij
-   *Authorize*. Token ląduje w `~/.config/quickshell-island/discord_token`
+   *Authorize*. Token ląduje w `~/.config/PluDynamicIsland/discord_token`
    i jest używany przy kolejnych startach. Gdy wygaśnie, mostek kasuje go
    i prosi o zgodę jeszcze raz.
 
@@ -667,7 +709,7 @@ słuchawka niebieska = w uchu, jasna = poza uchem, ciemna = w etui,
 błyskawica = ładuje; nazwa trybu stoi w nagłówku.
 
 **Pauza po wyjęciu** (domyślnie włączona, zapis w
-`~/.config/quickshell-island/airpods.json`): wyjęcie słuchawki pauzuje muzykę,
+`~/.config/PluDynamicIsland/airpods.json`): wyjęcie słuchawki pauzuje muzykę,
 włożenie wznawia — tylko to, co wyspa sama zapauzowała, i tylko gdy w uszach
 jest znów tyle słuchawek, ile przed pauzą. Działa wyłącznie wtedy, gdy
 domyślne wyjście dźwięku to AirPodsy (nazwa sinka `bluez_output.<adres>`) —

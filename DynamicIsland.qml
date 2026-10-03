@@ -27,35 +27,59 @@ PanelWindow {
     // Ustawienia
     // ---------------------------------------------------------------
 
-    property string uiLocale: "pl_PL"
-    property int topMargin: 8
-    property int collapseDelay: 220     // ile ms po zjechaniu myszką wyspa się zwija
-    property int noticeDuration: 3200   // jak długo trwa auto-rozwinięcie przy zmianie utworu
-    property int notificationDuration: 4500   // ...przy nowym powiadomieniu
-    property int jobNoticeDuration: 3000      // ...na starcie transferu plików
-    property int airPodsNoticeDuration: 3500  // ...po połączeniu AirPodsów
-    property int volumeNoticeDuration: 1400   // jak długo zwinięta pigułka pokazuje pasek głośności
+    // Wartości z IslandConfig pochodzą z ~/.config/PluDynamicIsland/config.jsonc
+    // (opis i domyślne: config.default.jsonc). Tu zostają nazwane właściwości,
+    // żeby reszta pliku nie musiała wiedzieć, skąd się biorą.
+
+    readonly property string uiLocale: IslandConfig.general.locale
+    readonly property int topMargin: IslandConfig.general.topMargin
+    readonly property int collapseDelay: IslandConfig.expand.collapseDelay   // ile ms po zjechaniu myszką wyspa się zwija
+    // Auto-rozwinięcia: czy i na ile ms (zmiana utworu, powiadomienie,
+    // start transferu plików, połączenie AirPodsów).
+    readonly property bool expandOnTrackChange: IslandConfig.expand.onTrackChange
+    readonly property int noticeDuration: IslandConfig.expand.trackChangeMs
+    readonly property bool expandOnNotification: IslandConfig.expand.onNotification
+    readonly property int notificationDuration: IslandConfig.expand.notificationMs
+    readonly property bool expandOnTransfer: IslandConfig.expand.onTransfer
+    readonly property int jobNoticeDuration: IslandConfig.expand.transferMs
+    readonly property bool expandOnAirPods: IslandConfig.expand.onAirPods
+    readonly property int airPodsNoticeDuration: IslandConfig.expand.airPodsMs
+    // Pasek głośności w zwiniętej pigułce: czy i na ile ms.
+    readonly property bool volumeNoticeEnabled: IslandConfig.volume.notice
+    readonly property int volumeNoticeDuration: IslandConfig.volume.noticeMs
     property int jobBarGap: 4                 // przerwa między wyspą a paskiem postępu pod nią
+
+    // Formaty zegara (Qt.formatTime). Szerokość zwiniętej pigułki jest stała,
+    // więc format z sekundami może się w niej nie zmieścić obok widma.
+    readonly property string clockPillFormat: IslandConfig.clock.pillFormat
+    readonly property string clockCardFormat: IslandConfig.clock.cardFormat
+    readonly property string clockDateFormat: IslandConfig.clock.dateFormat
 
     // Obwódka baterii wokół zwiniętej pigułki (tylko laptop). Grubość
     // w px — parzysta nie musi być, bo linia leży wewnątrz krawędzi, a nie
     // na niej. Poniżej progu, bez ładowania, obwódka robi się czerwona.
-    property real batteryRingWidth: 2
-    property real batteryLowLevel: 0.2
-    // Pulsowanie przy ładowaniu: pełny cykl (przygaśnięcie i powrót) w ms
-    // i jasność w najciemniejszym punkcie (0–1).
-    property int batteryPulseMs: 2400
+    readonly property bool batteryRingEnabled: IslandConfig.battery.ring
+    readonly property real batteryRingWidth: IslandConfig.battery.ringWidth
+    readonly property real batteryLowLevel: IslandConfig.battery.lowLevel
+    // Kolory obwódki: na baterii, na zasilaczu i przy niskim poziomie.
+    readonly property color batteryColor: IslandConfig.battery.color
+    readonly property color batteryChargingColor: IslandConfig.battery.chargingColor
+    readonly property color batteryLowColor: IslandConfig.battery.lowColor
+    // Pulsowanie przy ładowaniu (tylko z IslandConfig.loopAnimations): pełny
+    // cykl (przygaśnięcie i powrót) w ms i jasność w najciemniejszym punkcie (0–1).
+    readonly property int batteryPulseMs: IslandConfig.battery.pulseMs
+    readonly property real batteryPulseMin: IslandConfig.battery.pulseMin
     // Podłączenie / odłączenie ładowarki: zwinięta pigułka poszerza się
     // na tyle ms do powerNoticeWidth i pokazuje stan zasilania.
-    property int powerNoticeDuration: 2600
+    readonly property bool powerNoticeEnabled: IslandConfig.battery.chargerNotice
+    readonly property int powerNoticeDuration: IslandConfig.battery.chargerNoticeMs
     property int powerNoticeWidth: 232
-    property real batteryPulseMin: 0.35
 
     // Dogładzanie słupków widma po stronie QML. Przy 60 fps klatka przychodzi
     // co ~17 ms, więc 28 ms to niecałe dwie klatki — słupek zdąży prawie
     // dobiec do celu, zanim przyjdzie następny. Poprzednie 90 ms oznaczało,
     // że nie dobiegał nigdy, i to właśnie dawało wrażenie ospałości.
-    property int spectrumSmoothingMs: 28
+    readonly property int spectrumSmoothingMs: IslandConfig.spectrum.smoothingMs
 
     // Kolor widma z okładki (jak w iOS). Z palety okładki wygrywa kolor
     // o największej chromie (max − min kanałów RGB, 0–1), a jego jasność
@@ -66,24 +90,27 @@ PanelWindow {
     // za szary i bierze ŚREDNIĄ jasność pasa w granicach artGray*Lightness.
     // Wcześniej szary pas dostawał na sztywno 0,88, więc ciemna okładka
     // z odrobiną bieli dawała całe białe słupki.
-    property color spectrumFallbackColor: "#38d47a"
+    readonly property bool spectrumFromArt: IslandConfig.spectrum.colorFromArt
+    readonly property color spectrumFallbackColor: IslandConfig.spectrum.fallbackColor
     property real artAccentMinLightness: 0.55
     property real artAccentMaxLightness: 0.72
     property real artAccentMinSaturation: 0.5
     property real artGrayChroma: 0.12
     property real artGrayMinLightness: 0.5
     property real artGrayMaxLightness: 0.8
-    property int artAccentFadeMs: 450
+    readonly property int artAccentFadeMs: IslandConfig.spectrum.colorFadeMs
 
     // Przewijanie kart kółkiem. Jeden ząbek kółka to 120 jednostek angleDelta;
     // touchpad przysyła drobne porcje, które się sumują. Po przeskoku karty
     // kolejne zdarzenia są ignorowane przez wheelCooldownMs, żeby jedno
     // machnięcie (z bezwładnością touchpada) nie przeskoczyło dwóch kart.
     property int wheelStepDelta: 120
-    property int wheelCooldownMs: 260
+    readonly property int wheelCooldownMs: IslandConfig.expand.wheelCooldownMs
 
-    property int pillGap: 8             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
-    property int pillMaxWidth: 200      // dłuższe nazwy kanałów / aplikacji są obcinane
+    readonly property bool voicePillEnabled: IslandConfig.pills.voice
+    readonly property bool screencastPillEnabled: IslandConfig.pills.screencast
+    readonly property int pillGap: IslandConfig.pills.gap             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
+    readonly property int pillMaxWidth: IslandConfig.pills.maxWidth   // dłuższe nazwy kanałów / aplikacji są obcinane
 
     // Rozmiar nakładek (Wi-Fi, Bluetooth). Wpisany tutaj, a nie brany
     // z implicitWidth panelu, bo panele siedzą w Loaderze i przy zamkniętej
@@ -247,7 +274,7 @@ PanelWindow {
         function onVolumeNudged() {
             // Rozwinięta wyspa i tak pokazuje głośność w pigułce wyjścia,
             // a przykrycie karty paskiem byłoby krokiem wstecz.
-            if (root.expanded) return;
+            if (root.expanded || !root.volumeNoticeEnabled) return;
             root.volumeNotice = true;
             volumeNoticeTimer.restart();
         }
@@ -280,7 +307,7 @@ PanelWindow {
         const changed = root.knownPowerSource >= 0 && now !== root.knownPowerSource;
         root.knownPowerSource = now;
         // Rozwinięta wyspa zasłania pigułkę, a obwódka i tak zniknęła.
-        if (!changed || root.expanded) return;
+        if (!changed || root.expanded || !root.powerNoticeEnabled) return;
         root.powerNoticeOnBattery = now === 1;
         root.volumeNotice = false;
         root.powerNotice = true;
@@ -385,11 +412,19 @@ PanelWindow {
     // karta jest pamiętana po NAZWIE (currentKey), a indeks z niej wyprowadzony —
     // przy indeksie trzymanym wprost połączenie słuchawek przełączyłoby
     // użytkownikowi kartę pod ręką (muzyka -> AirPodsy).
-    readonly property var cardKeys: airPodsShown
-        ? ["airpods", "music", "discord", "clock", "connectivity", "notifications"]
-        : ["music", "discord", "clock", "connectivity", "notifications"]
+    //
+    // Karty ukryte w konfiguracji (cards.hidden) wypadają z listy, więc ich
+    // indeks to -1 — setCard() i showCardNotice() takie odrzucają, a slot
+    // się chowa. Pusta lista zepsułaby rozmiar wyspy, stąd zegar awaryjnie.
+    readonly property var cardKeys: {
+        const all = airPodsShown
+            ? ["airpods", "music", "discord", "clock", "connectivity", "notifications"]
+            : ["music", "discord", "clock", "connectivity", "notifications"];
+        const shown = all.filter(k => !IslandConfig.cardHidden(k));
+        return shown.length > 0 ? shown : ["clock"];
+    }
     readonly property int cardMusic: cardKeys.indexOf("music")
-    readonly property int cardAirPods: cardKeys.indexOf("airpods")   // -1 bez słuchawek
+    readonly property int cardAirPods: cardKeys.indexOf("airpods")   // -1 bez słuchawek (albo ukryta)
     readonly property int cardDiscord: cardKeys.indexOf("discord")
     readonly property int cardClock: cardKeys.indexOf("clock")
     readonly property int cardConnectivity: cardKeys.indexOf("connectivity")
@@ -516,7 +551,7 @@ PanelWindow {
         if (inVoice) return formatTime(DiscordService.elapsedSeconds);
         if (DiscordService.connected) return "Wejdź na kanał głosowy";
         switch (DiscordService.error) {
-        case "brak konfiguracji": return "Brak ~/.config/quickshell-island/discord.json";
+        case "brak konfiguracji": return "Brak ~/.config/PluDynamicIsland/discord.json";
         case "Discord nie działa": return "Uruchom Discorda";
         case "autoryzacja nieudana": return "Autoryzacja nieudana, sprawdź log";
         case "mostek nie działa": return "Mostek nie działa, sprawdź log";
@@ -552,6 +587,7 @@ PanelWindow {
     // Powiadomienie dotyczy muzyki, więc pokazuje kartę muzyki — nawet jeśli
     // wyspa została zostawiona na innej — i już na niej zostaje.
     function showNotice() {
+        if (!root.expandOnTrackChange || root.cardMusic < 0) return;
         if (!root.hasPlayer || root.trackTitle === "") return;
         if (root.overlayOpen) return;
         root.keyBeforeNotice = "";
@@ -568,6 +604,8 @@ PanelWindow {
         // wpisywania hasła zabrałaby wyspę spod ręki. Wpis i tak zostaje
         // w historii, więc nic nie ginie.
         if (root.overlayOpen) return;
+        // Karta ukryta w konfiguracji — rozwinięcie pokazałoby inną, bez powodu.
+        if (card < 0) return;
         if (root.currentCard !== card && root.keyBeforeNotice === "")
             root.keyBeforeNotice = root.currentKey;
         root.setCard(card, false);
@@ -585,8 +623,12 @@ PanelWindow {
     Connections {
         target: NotificationService
 
-        function onNotified(entry) { root.showCardNotice(root.cardNotifications, root.notificationDuration); }
-        function onJobStarted(job) { root.showCardNotice(root.cardNotifications, root.jobNoticeDuration); }
+        function onNotified(entry) {
+            if (root.expandOnNotification) root.showCardNotice(root.cardNotifications, root.notificationDuration);
+        }
+        function onJobStarted(job) {
+            if (root.expandOnTransfer) root.showCardNotice(root.cardNotifications, root.jobNoticeDuration);
+        }
     }
 
     // Parowanie potrafi zacząć URZĄDZENIE (klawiatura, telefon), a nie my.
@@ -619,7 +661,9 @@ PanelWindow {
                 root.setCard(root.hasPlayer ? root.cardMusic : root.cardClock, false);
         }
 
-        function onArrived() { root.showCardNotice(root.cardAirPods, root.airPodsNoticeDuration); }
+        function onArrived() {
+            if (root.expandOnAirPods) root.showCardNotice(root.cardAirPods, root.airPodsNoticeDuration);
+        }
 
         // Pauza po wyjęciu słuchawki i wznowienie po włożeniu, jak w iOS.
         // Tylko gdy dźwięk idzie przez AirPodsy (routedHere). Wznawiamy
@@ -710,7 +754,7 @@ PanelWindow {
     // przez zieleń przy każdej zmianie utworu wyglądałoby na mrugnięcie.
     property color artAccent: spectrumFallbackColor
     property bool artAccentValid: false
-    property color spectrumColor: artAccentValid && artUrl !== "" ? artAccent : spectrumFallbackColor
+    property color spectrumColor: spectrumFromArt && artAccentValid && artUrl !== "" ? artAccent : spectrumFallbackColor
 
     Behavior on spectrumColor { ColorAnimation { duration: root.artAccentFadeMs } }
 
@@ -887,7 +931,7 @@ PanelWindow {
 
         x: Math.round((root.width + root.collapsedWidth) / 2) + root.pillGap
         y: root.topMargin
-        width: root.inVoice ? voicePill.implicitWidth : 0
+        width: root.inVoice && root.voicePillEnabled ? voicePill.implicitWidth : 0
         height: root.collapsedHeight
 
         HoverHandler { id: pillHover }
@@ -1123,7 +1167,7 @@ PanelWindow {
             }
 
             Text {
-                text: Qt.formatTime(clock.date, "HH:mm")
+                text: Qt.formatTime(clock.date, root.clockPillFormat)
                 color: "#f2f2f2"
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -1150,7 +1194,7 @@ PanelWindow {
                         radius: 1
                         antialiasing: true
                         color: !root.isPlaying ? "#4a4a4f"
-                            : (root.artUrl !== "" && root.barColors[index] !== undefined)
+                            : (root.spectrumFromArt && root.artUrl !== "" && root.barColors[index] !== undefined)
                                 ? root.barColors[index] : root.spectrumColor
 
                         Behavior on color { ColorAnimation { duration: root.artAccentFadeMs } }
@@ -1162,7 +1206,11 @@ PanelWindow {
                         // sami — anchors wewnątrz positionera potrafią się gryźć.
                         y: (spectrum.height - height) / 2
 
+                        // Poniżej 60 fps dogładzanie trwałoby prawie cały odstęp
+                        // między klatkami i wyspa rysowałaby dalej co vsync —
+                        // obniżenie framerate nic by nie dało.
                         Behavior on height {
+                            enabled: CavaService.framerate >= 60
                             NumberAnimation {
                                 duration: root.spectrumSmoothingMs
                                 easing.type: Easing.OutQuad
@@ -1173,7 +1221,9 @@ PanelWindow {
             }
 
             // Awaryjnie, gdy cavy nie ma albo nie wstała — stara kropka statusu.
+            // Puls tylko z IslandConfig.loopAnimations.
             Rectangle {
+                id: playbackDot
                 width: 6; height: 6; radius: 3
                 antialiasing: true
                 color: root.isPlaying ? root.spectrumColor : "#4a4a4f"
@@ -1181,10 +1231,12 @@ PanelWindow {
                 Layout.alignment: Qt.AlignVCenter
 
                 SequentialAnimation on opacity {
-                    running: root.isPlaying && !CavaService.available
+                    running: root.isPlaying && !CavaService.available && IslandConfig.loopAnimations
                     loops: Animation.Infinite
                     NumberAnimation { from: 1.0; to: 0.35; duration: 700; easing.type: Easing.InOutSine }
                     NumberAnimation { from: 0.35; to: 1.0; duration: 700; easing.type: Easing.InOutSine }
+                    // Pauza muzyki w połowie cyklu zostawiłaby kropkę przygaszoną.
+                    onRunningChanged: if (!running) playbackDot.opacity = 1
                 }
             }
 
@@ -1242,6 +1294,7 @@ PanelWindow {
                 x: root.cardMusic * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
+                visible: root.cardMusic >= 0
 
                 // Z odtwarzaczem: okładka, tytuł, postęp, kontrolki.
                 Item {
@@ -1467,7 +1520,7 @@ PanelWindow {
                 x: root.cardAirPods * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
-                visible: root.airPodsShown
+                visible: root.cardAirPods >= 0
 
                 AirPodsCard {
                     id: airpods
@@ -1482,6 +1535,7 @@ PanelWindow {
                 x: root.cardDiscord * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
+                visible: root.cardDiscord >= 0
 
                 Item {
                     anchors.centerIn: parent
@@ -1599,6 +1653,7 @@ PanelWindow {
                 x: root.cardClock * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
+                visible: root.cardClock >= 0
 
                 ColumnLayout {
                     anchors.centerIn: parent
@@ -1607,7 +1662,7 @@ PanelWindow {
 
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: Qt.formatTime(clock.date, "HH:mm:ss")
+                        text: Qt.formatTime(clock.date, root.clockCardFormat)
                         color: "#f5f5f5"
                         font.pixelSize: 30
                         font.weight: Font.Light
@@ -1615,7 +1670,7 @@ PanelWindow {
 
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: clock.date.toLocaleDateString(Qt.locale(root.uiLocale), "dddd, d MMMM")
+                        text: clock.date.toLocaleDateString(Qt.locale(root.uiLocale), root.clockDateFormat)
                         color: "#9a9aa2"
                         font.pixelSize: 12
                     }
@@ -1627,6 +1682,7 @@ PanelWindow {
                 x: root.cardConnectivity * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
+                visible: root.cardConnectivity >= 0
 
                 ConnectivityCard {
                     id: connectivity
@@ -1644,6 +1700,7 @@ PanelWindow {
                 x: root.cardNotifications * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
+                visible: root.cardNotifications >= 0
 
                 NotificationCard {
                     id: notifications
@@ -1978,6 +2035,10 @@ PanelWindow {
         readonly property bool charging: battery.state === UPowerDeviceState.Charging
                                          || battery.state === UPowerDeviceState.FullyCharged
         readonly property bool low: level <= root.batteryLowLevel && !charging
+        // Na zasilaczu (także FullyCharged) zielona, na baterii jasna.
+        property color ringColor: low ? root.batteryLowColor
+                                  : (charging ? root.batteryChargingColor : root.batteryColor)
+        Behavior on ringColor { ColorAnimation { duration: 400; easing.type: Easing.OutCubic } }
         // Pulsuje tylko prawdziwe ładowanie — FullyCharged na zasilaczu stoi
         // spokojnie, inaczej laptop przy biurku mrugałby bez końca.
         readonly property bool pulsing: battery.state === UPowerDeviceState.Charging
@@ -1986,7 +2047,7 @@ PanelWindow {
         // steruje chowaniem obwódki przy rozwinięciu i animacje by się gryzły.
         property real pulse: 1
         SequentialAnimation on pulse {
-            running: batteryRing.pulsing && batteryRing.visible
+            running: batteryRing.pulsing && batteryRing.visible && IslandConfig.loopAnimations
             loops: Animation.Infinite
             NumberAnimation { to: root.batteryPulseMin; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
             NumberAnimation { to: 1; duration: root.batteryPulseMs / 2; easing.type: Easing.InOutSine }
@@ -2010,7 +2071,7 @@ PanelWindow {
 
         // Tylko w spoczynku: rozwinięta wyspa ma własną treść, a zielona rama
         // wokół formularza Wi-Fi czy karty muzyki tylko by rozpraszała.
-        opacity: available && !root.expanded ? 1 : 0
+        opacity: available && root.batteryRingEnabled && !root.expanded ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
@@ -2018,7 +2079,7 @@ PanelWindow {
 
         ShapePath {
             strokeWidth: root.batteryRingWidth
-            strokeColor: Qt.alpha(batteryRing.low ? "#ff453a" : "#30d158", batteryRing.pulse)
+            strokeColor: Qt.alpha(batteryRing.ringColor, batteryRing.pulse)
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             trim.end: batteryRing.level
@@ -2045,7 +2106,7 @@ PanelWindow {
     Rectangle {
         id: voicePill
 
-        readonly property bool shown: root.inVoice && !root.expanded && !root.powerNotice
+        readonly property bool shown: root.inVoice && root.voicePillEnabled && !root.expanded && !root.powerNotice
 
         x: pillHoverArea.x
         y: pillHoverArea.y
@@ -2080,8 +2141,9 @@ PanelWindow {
             width: Math.min(implicitWidth, root.pillMaxWidth - 24)
             spacing: 6
 
-            // Pulsująca kropka — trwa rozmowa.
+            // Pulsująca kropka — trwa rozmowa. Puls tylko z IslandConfig.loopAnimations.
             Rectangle {
+                id: voiceDot
                 Layout.preferredWidth: 6
                 Layout.preferredHeight: 6
                 Layout.alignment: Qt.AlignVCenter
@@ -2090,10 +2152,12 @@ PanelWindow {
                 color: "#38d47a"
 
                 SequentialAnimation on opacity {
-                    running: voicePill.shown
+                    running: voicePill.shown && IslandConfig.loopAnimations
                     loops: Animation.Infinite
                     NumberAnimation { from: 1.0; to: 0.35; duration: 700; easing.type: Easing.InOutSine }
                     NumberAnimation { from: 0.35; to: 1.0; duration: 700; easing.type: Easing.InOutSine }
+                    // Wyłączenie w ustawieniach w połowie cyklu zostawiłoby kropkę przygaszoną.
+                    onRunningChanged: if (!running) voiceDot.opacity = 1
                 }
             }
 
@@ -2134,7 +2198,8 @@ PanelWindow {
     Rectangle {
         id: screencastPill
 
-        readonly property bool shown: ScreencastService.active && !root.expanded && !root.powerNotice
+        readonly property bool shown: ScreencastService.active && root.screencastPillEnabled
+                                      && !root.expanded && !root.powerNotice
 
         // Lewa strona, lustrzanie do pigułki rozmowy po prawej.
         x: Math.round((root.width - root.collapsedWidth) / 2) - root.pillGap - width
@@ -2166,8 +2231,10 @@ PanelWindow {
             width: Math.min(implicitWidth, root.pillMaxWidth - 24)
             spacing: 6
 
-            // Czerwona pulsująca kropka — jak wskaźnik nagrywania.
+            // Czerwona pulsująca kropka — jak wskaźnik nagrywania. Puls tylko
+            // z IslandConfig.loopAnimations.
             Rectangle {
+                id: screencastDot
                 Layout.preferredWidth: 6
                 Layout.preferredHeight: 6
                 Layout.alignment: Qt.AlignVCenter
@@ -2176,10 +2243,11 @@ PanelWindow {
                 color: "#ff4b4b"
 
                 SequentialAnimation on opacity {
-                    running: screencastPill.shown
+                    running: screencastPill.shown && IslandConfig.loopAnimations
                     loops: Animation.Infinite
                     NumberAnimation { from: 1.0; to: 0.25; duration: 600; easing.type: Easing.InOutSine }
                     NumberAnimation { from: 0.25; to: 1.0; duration: 600; easing.type: Easing.InOutSine }
+                    onRunningChanged: if (!running) screencastDot.opacity = 1
                 }
             }
 

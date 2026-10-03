@@ -26,9 +26,9 @@ Singleton {
     // Ustawienia
     // ---------------------------------------------------------------
 
-    property int historyLimit: 30
+    readonly property int historyLimit: IslandConfig.notifications.historyLimit   // config.jsonc
     property int ownerCheckMs: 5000     // co ile pytać, czy nazwa Notifications jest wolna
-    property int popupDuration: 5000    // po tylu ms dymek schodzi z karty (samo powiadomienie żyje dalej)
+    readonly property int popupDuration: IslandConfig.notifications.popupMs    // po tylu ms dymek schodzi z karty (samo powiadomienie żyje dalej)
 
     // ---------------------------------------------------------------
     // Stan

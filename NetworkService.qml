@@ -29,7 +29,7 @@ Singleton {
     // Po ilu ms od zlecenia przestajemy pokazywać "łączę". NetworkManager
     // przy złym haśle potrafi milczeć — próbuje ponownie, zamiast od razu
     // zgłosić błąd — a kręcące się w nieskończoność kółko wygląda na zawieszenie.
-    property int connectTimeoutMs: 25000
+    readonly property int connectTimeoutMs: IslandConfig.wifi.connectTimeoutMs   // config.jsonc
 
     // ---------------------------------------------------------------
     // Urządzenie i sieci

@@ -112,22 +112,46 @@ Singleton {
         proc.write(JSON.stringify({ cmd: "mode", value: mode }) + "\n");
     }
 
-    // Katalog jest wspólny z konfiguracją Discorda. Brak pliku = pierwszy start:
-    // zapisujemy domyślne, żeby było co edytować ręcznie.
+    // Katalog jest wspólny z konfiguracją wyspy i Discorda. Brak pliku =
+    // pierwszy start: zapisujemy domyślne, żeby było co edytować ręcznie —
+    // albo ustawienie z dawnego katalogu (IslandConfig.legacyDir), żeby
+    // przeprowadzka nie przestawiła użytkownikowi pauzy po wyjęciu słuchawki.
     FileView {
         id: settingsFile
-        path: Quickshell.env("HOME") + "/.config/quickshell-island/airpods.json"
+        path: IslandConfig.configDir + "/airpods.json"
         watchChanges: true
+        printErrors: false
         onFileChanged: reload()
         onAdapterUpdated: writeAdapter()
+        // Zapis po wyjściu z obsługi błędu — wołany w niej Quickshell gubi
+        // ("got operation finished from dropped operation"). Zmiana
+        // settings.autoPause sama woła writeAdapter (onAdapterUpdated).
         onLoadFailed: error => {
-            if (error === FileViewError.FileNotFound) writeAdapter();
+            if (error !== FileViewError.FileNotFound) return;
+            Qt.callLater(() => {
+                try {
+                    const old = JSON.parse(legacyFile.text());
+                    if (typeof old.autoPause === "boolean" && old.autoPause !== settings.autoPause) {
+                        settings.autoPause = old.autoPause;
+                        return;
+                    }
+                } catch (e) {}
+                settingsFile.writeAdapter();
+            });
         }
 
         JsonAdapter {
             id: settings
             property bool autoPause: true
         }
+    }
+
+    // Tylko do odczytu przy przeprowadzce; nieistniejący plik daje "".
+    FileView {
+        id: legacyFile
+        path: IslandConfig.legacyDir + "/airpods.json"
+        blockLoading: true
+        printErrors: false
     }
 
     Timer {

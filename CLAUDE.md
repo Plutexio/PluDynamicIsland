@@ -88,9 +88,9 @@ import pozostałych komponentów.
 
 Wyspa chodzi na Hyprlandzie i na KWinie. Miejsca, w których to widać:
 
-- **Monitor.** `islandScreen` w `shell.qml`; puste = automat (ekran w punkcie
-  `(0,0)`, potem pierwszy z listy). Nie wpisuj tu nazwy na stałe — to psuje
-  projekt na drugiej maszynie.
+- **Monitor.** `general.screen` w `config.jsonc` (→ `islandScreen` w `shell.qml`);
+  puste = automat (ekran w punkcie `(0,0)`, potem pierwszy z listy). Nie wpisuj
+  nazwy na stałe w `config.default.jsonc` — to psuje projekt na drugiej maszynie.
 - **Skrót globalny.** `hyprland-global-shortcuts-v1` ma tylko Hyprland, więc
   `GlobalShortcut` siedzi w osobnym pliku (`HyprlandShortcut.qml`) ładowanym
   `Loaderem` po `Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")`. Import
@@ -397,7 +397,7 @@ tylko tekst, a Discord RPC to ramki binarne `[op u32le][len u32le][json]`. Moste
 rozmawia z QML JSON-em linia po linii: na stdout pełne migawki stanu (`type:"state"`)
 i logi, na stdin komendy `mute` / `deafen` / `leave`.
 
-- Sekrety w `~/.config/quickshell-island/discord.json`, token obok. Celowo poza
+- Sekrety w `~/.config/PluDynamicIsland/discord.json`, token obok. Celowo poza
   projektem. Nie echować sekretu ani tokena do logu / rozmowy.
 - Mostek **nie kończy się** po rozłączeniu z Discordem — sam czeka i łączy ponownie.
   Kod wyjścia `3` = brak konfiguracji, serwis wtedy nie restartuje. Inne kody →
@@ -596,8 +596,10 @@ przy `BAT0/capacity` = 48), `ready` przychodzi ~1 s po starcie, bo `upower`
 startuje z aktywacji D-Bus. Bez `isLaptopBattery` (desktop) obwódki nie ma.
 Jest rodzeństwem wyspy, nie dzieckiem: `IslandClip` rysuje ramkę nad
 zawartością. `CurveRenderer`, bo domyślny renderer rysuje łuki łamaną.
-Przy `Charging` (nie `FullyCharged`) linia pulsuje alfą koloru — `opacity`
-Shape jest zajęte przez chowanie przy rozwinięciu.
+Stan zasilania pokazuje kolor (`batteryColor` / `batteryChargingColor` /
+`batteryLowColor`). Przy `Charging` (nie `FullyCharged`) linia dodatkowo pulsuje
+alfą koloru — `opacity` Shape jest zajęte przez chowanie przy rozwinięciu —
+ale **tylko przy `IslandConfig.loopAnimations`** (niżej).
 
 Podłączenie/odłączenie ładowarki (`UPower.onBattery`) poszerza zwiniętą pigułkę
 do `powerNoticeWidth` (`restingWidth`, wliczone w `reachWidth`) na
@@ -606,6 +608,71 @@ i udostępniania na ten czas znikają. Zmierzone: przy starcie `onBattery`
 zmienia się **przed** `displayDevice.ready`, stąd `knownPowerSource = -1`
 i ignorowanie zmian sprzed `available` — inaczej każdy start na baterii
 udawałby odłączenie.
+
+### IslandConfig (konfiguracja użytkownika)
+
+Singleton nad `~/.config/PluDynamicIsland/config.jsonc` — ustawienia poza
+projektem, żeby zmiana nie ruszała gita, a laptop i desktop miały swoje.
+Domyślne wartości **i ich opis** są w `config.default.jsonc` w projekcie; ten
+sam plik jest szablonem kopii użytkownika (brak kopii → zapis całości,
+z komentarzami). Kopia nadpisuje tylko to, co w niej jest.
+
+- **Nowe ustawienie dla użytkownika** = wpis w `config.default.jsonc`
+  (z komentarzem) + nazwana właściwość na górze komponentu, czytana z sekcji
+  (`readonly property int collapseDelay: IslandConfig.expand.collapseDelay`).
+  Typ bierze się z wartości domyślnej; zakres i listę dozwolonych wartości
+  dopisz w `ranges` / `choices` w `IslandConfig.qml`, jeśli zła wartość
+  potrafi coś zepsuć. Geometria kart i nakładek celowo **nie** jest w konfigu.
+- **JSONC, własny parser.** `JSON.parse` z V4 przy błędzie mówi tylko
+  „Parse error", bez miejsca, a `JsonAdapter` nie zna komentarzy. Parser
+  w `IslandConfig` podaje `plik:linia:kolumna` i zostawia poprzednią
+  konfigurację, więc zapis w połowie edycji niczego nie wyzerowuje.
+- Plik jest tylko do odczytu z punktu widzenia wyspy — zapis z UI zgubiłby
+  komentarze. Pisze do niego strona „Wyspa” w ustawieniach PluDE
+  (`~/PluDE/PluSettings/IslandConfigService.qml`), punktowo: podmienia zakres
+  jednej wartości w tekście. Zmiana nazwy klucza albo sekcji w
+  `config.default.jsonc` = poprawka także tam (`IslandPage.qml`). Stan przełączany w wyspie (`autoPause` AirPodsów) zostaje
+  w osobnym pliku z `JsonAdapter`.
+- Domyślne ładują się **synchronicznie** (`blockLoading`): komponenty czytają
+  sekcje w swoich powiązaniach od pierwszej chwili i bez tego start sypałby
+  `Unable to assign [undefined]`.
+- Pierwszy zapis kopii idzie przez `Qt.callLater` — `setText` wołane wprost
+  w `onLoadFailed` Quickshell gubi („got operation finished from dropped
+  operation"). Po zapisie `reload()`: obserwacja pliku, którego nie było,
+  nie łapała edycji świeżej kopii (zmierzone).
+- `printErrors: false` na pliku użytkownika — brak pliku to pierwszy start,
+  a nie `WARN` do licznika w logu.
+- **Katalog `~/.config/PluDynamicIsland`** (`IslandConfig.configDir`) — jedno
+  źródło ścieżki dla QML; `discord_bridge.py` ma swoją kopię. Dawny
+  `~/.config/quickshell-island` (`legacyDir`) opróżniają **właściciele plików**,
+  każdy swój w chwili pierwszego odczytu: mostek Discorda przenosi
+  `discord.json` i token (`migrate_legacy`, potem `rmdir` pustego katalogu),
+  `AirPodsService` przepisuje `autoPause`. Wspólna przeprowadzka z QML
+  ścigałaby się ze startem mostków — a zgubiony token to nowe okno zgody.
+- Zmiana parametrów cavy (`bars`, `framerate`, `noiseReduction`) restartuje
+  proces (`CavaService.restartForConfig`). Przy `bars` trzeba też wyzerować
+  `levels` do nowej długości, bo parser odrzuca ramki o złej liczbie słupków.
+- Ukryta karta (`cards.hidden`) wypada z `cardKeys`, więc jej indeks to `-1`:
+  slot ma `visible: root.cardX >= 0`, a `setCard` i `showCardNotice` odrzucają
+  ujemne. Pusta lista kart → awaryjnie sam zegar.
+
+`general.loopAnimations`: `"auto"` (desktop tak, laptop nie,
+po `UPower.displayDevice.isLaptopBattery`) | `"on"` | `"off"`.
+
+Każda `Animation.Infinite` w wyspie oddaje klatkę co vsync, a kompozytor
+przerysowuje za nią cały ekran. Na laptopie (Intel UHD 630, 4K) puls obwódki
+trzymał GPU na 74% zajętości zamiast 11% i lagowało wszystko. Dlatego **każda
+nowa animacja w pętli musi mieć `&& IslandConfig.loopAnimations` w `running`**
+i `onRunningChanged` przywracające pełną jasność. Wyjątki: wskaźniki pracy
+(`busy` w `IslandTextButton`, skanowanie w `BluetoothPanel`) — trwają tylko
+tyle, co operacja.
+
+Sondując `IslandConfig`, dotknij go od startu (`property bool x:
+IslandConfig.loopAnimations`): singleton powstaje przy pierwszym odwołaniu,
+a UPower wczytuje się asynchronicznie — odczyt w tej samej chwili daje
+`onLaptop = false` (zmierzone). Sonda zmieniająca konfigurację niech pisze do
+pliku w kopii projektu (podmieniony `userPath`), nie do `~/.config` — ten
+czyta też działająca instancja użytkownika.
 
 ### Karta łączności (Wi-Fi, Bluetooth)
 
@@ -648,10 +715,10 @@ w karcie musi znosić `null` i chwilowy stan "busy".
 
 Quickshell nie zna pojęcia „monitora głównego" (Wayland go nie ma), a kolejność
 `Quickshell.screens` **nie** odpowiada priorytetom kompozytora — na desktopie z KDE
-`screens[0]` to drugi monitor. Monitor można wskazać po nazwie w `shell.qml`
-(`islandScreen`); **domyślnie jest pusto**, czyli automat: ekran w punkcie `(0,0)`,
-a potem pierwszy z listy. Nie wpisuj tu nazwy na stałe — projekt chodzi na dwóch
-maszynach o różnych monitorach (`DP-1` na desktopie, `eDP-1` na laptopie).
+`screens[0]` to drugi monitor. Monitor można wskazać po nazwie w `config.jsonc`
+(`general.screen`); **domyślnie jest pusto**, czyli automat: ekran w punkcie `(0,0)`,
+a potem pierwszy z listy. Nie wpisuj nazwy w `config.default.jsonc` — projekt chodzi
+na dwóch maszynach o różnych monitorach (`DP-1` na desktopie, `eDP-1` na laptopie).
 
 ### DockLink (dock PluDE)
 
@@ -685,7 +752,8 @@ Jeśli coś wygląda na nadmiarowe lub dziwne, komentarz ma wyjaśniać, dlaczeg
 wersja nie działa. Nie komentuj rzeczy oczywistych.
 
 **Ustawienia jako nazwane właściwości na górze pliku**, z komentarzem wyjaśniającym
-zakres i skutek — nie wartości wpisane w środku kodu. Przykłady: `collapseDelay`,
+zakres i skutek — nie wartości wpisane w środku kodu. Te, które ma zmieniać
+użytkownik, biorą wartość z `IslandConfig` (patrz wyżej). Przykłady: `collapseDelay`,
 `noticeDuration`, `spectrumSmoothingMs`, `noiseReduction`. Gdy dobierasz liczbę
 doświadczalnie, zapisz pomiar w README, żeby następny nie zgadywał od zera.
 

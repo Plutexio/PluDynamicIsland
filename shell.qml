@@ -90,7 +90,8 @@ ShellRoot {
     //
     // Nazwy monitorów wypisze:  hyprctl monitors    (Hyprland)
     //                           kscreen-doctor -o   (KDE)
-    property string islandScreen: ""
+    // Ustawiane w config.jsonc ("general.screen"), nie tutaj.
+    readonly property string islandScreen: IslandConfig.general.screen
 
     readonly property var targetScreens: {
         const all = Quickshell.screens;
