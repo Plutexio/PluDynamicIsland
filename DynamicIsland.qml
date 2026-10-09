@@ -128,6 +128,17 @@ PanelWindow {
     property int artPreviewSize: 440
     property int artPreviewMs: 480
 
+    // Korektor (klik w wizualizator na karcie muzyki) zajmuje całą wyspę.
+    // Szerokość z tego samego powodu co podgląd okładki: wizualizator stoi
+    // na karcie muzyki, więc węższy korektor wyrzuciłby kursor poza maskę.
+    property int eqWidth: 440
+    property int eqHeight: 250
+
+    // Pytanie o aktualizację (UpdateService) też zajmuje całą wyspę.
+    // Wysokość idzie za treścią panelu (liczba commitów, wynik).
+    readonly property int updateWidth: updatePanel.implicitWidth
+    readonly property int updateHeight: updatePanel.implicitHeight
+
     // ---------------------------------------------------------------
     // Okno
     // ---------------------------------------------------------------
@@ -158,7 +169,7 @@ PanelWindow {
     // otwarcie formularza nie ma przestawiać rozmiaru okna layer-shella.
     readonly property int maxCardHeight: Math.max(...cardHeights, airpods.implicitHeight,
                                                   notifications.historyHeight, overlayHeight,
-                                                  artPreviewSize)
+                                                  artPreviewSize, eqHeight, updatePanel.maxHeight)
     property int bottomReserve: 6
     implicitHeight: topMargin + maxCardHeight + bottomReserve + jobBarGap + jobBar.height
     color: "transparent"
@@ -239,6 +250,7 @@ PanelWindow {
         || outputChip.hovering || outputChipIdle.hovering || micSwitch.hovering
         || connectivity.hovering || notifications.hovering || airpods.hovering
         || (overlay.item ? overlay.item.hovering : false)
+        || eqPanel.hovering || updatePanel.hovering
     readonly property bool pointerInside: areaHover.hovered || controlsHovered || pillHover.hovered
 
     onPointerInsideChanged: {
@@ -344,6 +356,7 @@ PanelWindow {
         root.powerNotice = false;
     } else {
         root.artPreview = false;
+        root.eqView = false;
     }
 
     // ---- podgląd okładki ----
@@ -353,8 +366,31 @@ PanelWindow {
     // w tle do ponownego pojawienia się.
     property bool artPreview: false
     readonly property bool artPreviewShown: artPreview && expanded && !overlayOpen
-        && hasPlayer && currentKey === "music"
-    onCurrentKeyChanged: artPreview = false
+        && !updateShown && hasPlayer && currentKey === "music"
+    onCurrentKeyChanged: {
+        artPreview = false;
+        eqView = false;
+    }
+
+    // ---- korektor ----
+    // Tak jak podgląd okładki: zastępuje kartę muzyki, nie jest kartą.
+    // Bez warunku hasPlayer — zamknięcie odtwarzacza w trakcie ustawiania
+    // pasm nie ma wyrywać panelu spod ręki.
+    property bool eqView: false
+    readonly property bool eqShown: eqView && expanded && !overlayOpen && !updateShown
+        && currentKey === "music"
+
+    // ---- aktualizacja ----
+    // Jak korektor: zastępuje karuzelę, nie jest kartą. Sama rozwija wyspę
+    // i trzyma ją rozwiniętą do odpowiedzi — pytanie przychodzi przy starcie,
+    // bez kursora na wyspie, i zwinięte po prostu by przepadło. Nakładka
+    // (np. pytanie o PIN z BlueZ) ma pierwszeństwo; pytanie wraca po niej.
+    readonly property bool updateShown: UpdateService.prompting && !overlayOpen
+
+    function openEqualizer() {
+        root.artPreview = false;
+        root.eqView = true;
+    }
 
     // ---- nakładki (Wi-Fi, Bluetooth) ----
     // "" | "wifi" | "bluetooth". Nakładka zastępuje pasek kart i rozciąga
@@ -380,7 +416,7 @@ PanelWindow {
     // Funkcja, nie właściwość: Date.now() nie jest zależnością powiązania.
     function justClosedOutside() { return Date.now() - outsideClosedAt < overlayReopenGuardMs; }
 
-    readonly property bool expanded: hovered || pinned || notice || overlayOpen
+    readonly property bool expanded: hovered || pinned || notice || overlayOpen || updateShown
 
     // Karta (nazwa, nie indeks), do której wrócić po auto-rozwinięciu;
     // "" = nie wracać (muzyka zostaje na muzyce). Powiadomienie i transfer
@@ -535,9 +571,13 @@ PanelWindow {
     readonly property int collapsedWidth: 168
     readonly property int collapsedHeight: 34
     readonly property int expandedWidth: overlayOpen ? overlayWidth
-        : artPreviewShown ? artPreviewSize : cardWidths[currentCard]
+        : updateShown ? updateWidth
+        : artPreviewShown ? artPreviewSize
+        : eqShown ? eqWidth : cardWidths[currentCard]
     readonly property int expandedHeight: overlayOpen ? overlayHeight
-        : artPreviewShown ? artPreviewSize : cardHeights[currentCard]
+        : updateShown ? updateHeight
+        : artPreviewShown ? artPreviewSize
+        : eqShown ? eqHeight : cardHeights[currentCard]
 
     // ---- Discord ----
     readonly property bool inVoice: DiscordService.inVoice
@@ -589,7 +629,7 @@ PanelWindow {
     function showNotice() {
         if (!root.expandOnTrackChange || root.cardMusic < 0) return;
         if (!root.hasPlayer || root.trackTitle === "") return;
-        if (root.overlayOpen) return;
+        if (root.overlayOpen || root.updateShown) return;
         root.keyBeforeNotice = "";
         root.setCard(root.cardMusic, false);
         root.notice = true;
@@ -604,6 +644,9 @@ PanelWindow {
         // wpisywania hasła zabrałaby wyspę spod ręki. Wpis i tak zostaje
         // w historii, więc nic nie ginie.
         if (root.overlayOpen) return;
+        // To samo przy korektorze: przeciągany suwak zniknąłby spod kursora.
+        // Przy pytaniu o aktualizację karta przykryłaby je przed odpowiedzią.
+        if (root.eqShown || root.updateShown) return;
         // Karta ukryta w konfiguracji — rozwinięcie pokazałoby inną, bez powodu.
         if (card < 0) return;
         if (root.currentCard !== card && root.keyBeforeNotice === "")
@@ -835,6 +878,8 @@ PanelWindow {
     // kolorów pasa wygrywa najżywszy, tą samą regułą co akcent całości.
     // Do policzenia nowych pasów zostają stare, jak przy artAccent.
     property var barColors: []
+    // Kolory pasów dla słupków; pusta lista = wszystkie w akcencie.
+    readonly property var spectrumBarColors: spectrumFromArt && artUrl !== "" ? barColors : []
 
     Image {
         id: artSample
@@ -978,7 +1023,8 @@ PanelWindow {
             anchors.fill: parent
             // Nakładka i tak trzyma wyspę rozwiniętą, a klik w tło formularza
             // przypinałby ją tylko po to, żeby po zamknięciu została otwarta.
-            enabled: !root.overlayOpen
+            // To samo przy pytaniu o aktualizację.
+            enabled: !root.overlayOpen && !root.updateShown
             onClicked: root.pinned = !root.pinned
         }
 
@@ -988,8 +1034,10 @@ PanelWindow {
             id: wheel
 
             target: null
-            // Pod nakładką kółko należy do jej list, nie do karuzeli.
-            enabled: root.expanded && !root.overlayOpen
+            // Pod nakładką kółko należy do jej list, nie do karuzeli; nad
+            // korektorem do suwaków (poza nimi nie robi nic — przewinięcie
+            // karty zamknęłoby panel pod ręką).
+            enabled: root.expanded && !root.overlayOpen && !root.eqShown && !root.updateShown
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             property real accum: 0
 
@@ -1174,50 +1222,20 @@ PanelWindow {
             }
 
             // Wizualizacja spektrum z cavy w miejscu dawnej kropki statusu.
-            Row {
+            SpectrumBars {
                 id: spectrum
 
-                spacing: 2
-                height: 16
-                Layout.preferredHeight: 16
+                Layout.preferredHeight: maxBarHeight
                 Layout.alignment: Qt.AlignVCenter
                 visible: root.hasPlayer && CavaService.available
 
-                Repeater {
-                    model: CavaService.barCount
-
-                    delegate: Rectangle {
-                        required property int index
-                        readonly property real level: CavaService.levels[index] ?? 0
-
-                        width: 2
-                        radius: 1
-                        antialiasing: true
-                        color: !root.isPlaying ? "#4a4a4f"
-                            : (root.spectrumFromArt && root.artUrl !== "" && root.barColors[index] !== undefined)
-                                ? root.barColors[index] : root.spectrumColor
-
-                        Behavior on color { ColorAnimation { duration: root.artAccentFadeMs } }
-
-                        // Minimum 3 px, żeby w ciszy została czytelna kreska,
-                        // a nie znikające słupki.
-                        height: 3 + level * 13
-                        // Row ustawia tylko x, więc pionowe wyśrodkowanie robimy
-                        // sami — anchors wewnątrz positionera potrafią się gryźć.
-                        y: (spectrum.height - height) / 2
-
-                        // Poniżej 60 fps dogładzanie trwałoby prawie cały odstęp
-                        // między klatkami i wyspa rysowałaby dalej co vsync —
-                        // obniżenie framerate nic by nie dało.
-                        Behavior on height {
-                            enabled: CavaService.framerate >= 60
-                            NumberAnimation {
-                                duration: root.spectrumSmoothingMs
-                                easing.type: Easing.OutQuad
-                            }
-                        }
-                    }
-                }
+                barWidth: 2
+                maxBarHeight: 16
+                playing: root.isPlaying
+                colors: root.spectrumBarColors
+                accent: root.spectrumColor
+                colorFadeMs: root.artAccentFadeMs
+                smoothingMs: root.spectrumSmoothingMs
             }
 
             // Awaryjnie, gdy cavy nie ma albo nie wstała — stara kropka statusu.
@@ -1277,6 +1295,7 @@ PanelWindow {
             x: (island.width - root.slotWidth) / 2 - stripOffset
 
             readonly property bool shown: root.expanded && !root.overlayOpen && !root.artPreviewShown
+                && !root.eqShown && !root.updateShown
             opacity: shown ? 1 : 0
             visible: opacity > 0.01
 
@@ -1357,7 +1376,10 @@ PanelWindow {
                                 anchors.fill: parent
                                 enabled: art.status === Image.Ready
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.artPreview = true
+                                onClicked: {
+                                    root.eqView = false;
+                                    root.artPreview = true;
+                                }
                             }
                         }
 
@@ -1366,13 +1388,62 @@ PanelWindow {
                             Layout.alignment: Qt.AlignVCenter
                             spacing: 2
 
-                            Text {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                text: root.trackTitle !== "" ? root.trackTitle : "Nic nie gra"
-                                color: "#f5f5f5"
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
+                                spacing: 8
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    text: root.trackTitle !== "" ? root.trackTitle : "Nic nie gra"
+                                    color: "#f5f5f5"
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                }
+
+                                // Wizualizator, jak fala w rozwiniętej wyspie iOS.
+                                // Klik otwiera korektor. Bez hovera (nie zabiera
+                                // go podkładce), jak okładka obok. Obwódka
+                                // w kolorze widma = korektor włączony.
+                                Rectangle {
+                                    id: eqToggle
+
+                                    Layout.preferredWidth: cardBars.width + 14
+                                    Layout.preferredHeight: 20
+                                    Layout.alignment: Qt.AlignVCenter
+                                    radius: 7
+                                    antialiasing: true
+                                    color: Qt.rgba(1, 1, 1, eqClick.pressed ? 0.16 : 0.07)
+                                    border.width: 1
+                                    border.color: EqualizerService.enabled && EqualizerService.available
+                                        ? Qt.rgba(root.spectrumColor.r, root.spectrumColor.g, root.spectrumColor.b, 0.7)
+                                        : "transparent"
+                                    scale: eqClick.pressed ? 0.92 : 1
+
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+                                    Behavior on scale {
+                                        NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+                                    }
+
+                                    SpectrumBars {
+                                        id: cardBars
+                                        anchors.centerIn: parent
+                                        barWidth: 3
+                                        maxBarHeight: 12
+                                        playing: root.isPlaying
+                                        colors: root.spectrumBarColors
+                                        accent: root.spectrumColor
+                                        colorFadeMs: root.artAccentFadeMs
+                                        smoothingMs: root.spectrumSmoothingMs
+                                    }
+
+                                    MouseArea {
+                                        id: eqClick
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.openEqualizer()
+                                    }
+                                }
                             }
 
                             Text {
@@ -1906,6 +1977,54 @@ PanelWindow {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.artPreview = false
                 }
+            }
+        }
+
+        // ---- korektor ----------------------------------------------------
+        // Stały rozmiar docelowy, wyśrodkowany: wyspa rośnie i go odsłania,
+        // jak treść kart. Bez Loadera — panel jest lekki, a niewidoczny nie
+        // kosztuje rysowania; krzywa przelicza się tylko przy zmianie pasm.
+        EqualizerPanel {
+            id: eqPanel
+
+            anchors.centerIn: parent
+            width: root.eqWidth
+            height: root.eqHeight
+
+            accent: root.spectrumColor
+            opacity: root.eqShown ? 1 : 0
+            visible: opacity > 0.01
+            enabled: root.eqShown
+
+            Behavior on opacity {
+                NumberAnimation { duration: root.eqShown ? 300 : 120; easing.type: Easing.OutCubic }
+            }
+
+            onClosed: root.eqView = false
+        }
+
+        // ---- aktualizacja ------------------------------------------------
+        UpdatePanel {
+            id: updatePanel
+
+            anchors.centerIn: parent
+            width: root.updateWidth
+            height: root.updateHeight
+
+            // Ta sama sprężyna co wyspa: panel jest wyśrodkowany, więc skok
+            // jego wysokości (lista -> "Zaktualizowano", 196 -> 66 px)
+            // przesunąłby nagłówek o kilkadziesiąt px w chwili, gdy wyspa
+            // dopiero rusza.
+            Behavior on height {
+                NumberAnimation { duration: 520; easing.type: Easing.OutBack; easing.overshoot: 0.9 }
+            }
+
+            opacity: root.updateShown ? 1 : 0
+            visible: opacity > 0.01
+            enabled: root.updateShown
+
+            Behavior on opacity {
+                NumberAnimation { duration: root.updateShown ? 300 : 120; easing.type: Easing.OutCubic }
             }
         }
 

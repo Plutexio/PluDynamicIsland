@@ -17,8 +17,10 @@
 //  Czasy są w milisekundach (1000 = 1 s), kolory jako "#rrggbb"
 //  albo "#aarrggbb".
 //
-//  Sekrety Discorda zostają osobno w discord.json, a przełącznik pauzy
-//  AirPodsów w airpods.json (zmienia go karta AirPodsów).
+//  Sekrety Discorda zostają osobno w discord.json, przełącznik pauzy
+//  AirPodsów w airpods.json (zmienia go karta AirPodsów), a pasma i własne
+//  ustawienia korektora w equalizer.json (zmienia je panel korektora),
+//  a pominięty commit aktualizacji w update.json.
 
 {
     // ---- ogólne ------------------------------------------------------
@@ -136,6 +138,15 @@
         "step": 0.03
     },
 
+    // ---- korektor (equalizer) ----------------------------------------
+    // Pasma i własne ustawienia zapisuje sama wyspa, w equalizer.json obok.
+    "equalizer": {
+        // Ścisza wejście korektora o największe podbicie pasma, żeby
+        // podbity bas nie przesterowywał głośnych utworów. false = głośniej,
+        // ale z ryzykiem obcinania szczytów.
+        "autoHeadroom": true
+    },
+
     // ---- małe pigułki obok wyspy -------------------------------------
     "pills": {
         "voice": true,          // rozmowa na Discordzie: kanał + czas
@@ -162,5 +173,13 @@
     "wifi": {
         // Po tylu ms bez połączenia próba uchodzi za nieudaną.
         "connectTimeoutMs": 25000
+    },
+
+    // ---- aktualizacje ------------------------------------------------
+    "updates": {
+        // Przy starcie wyspy: git fetch i pytanie, gdy na master są nowe
+        // commity. Aktualizuje tylko czyste drzewo (bez lokalnych zmian
+        // i commitów), fast-forwardem. "Nie" pomija dany commit na stałe.
+        "check": true
     }
 }

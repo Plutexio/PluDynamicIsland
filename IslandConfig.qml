@@ -41,10 +41,12 @@ Singleton {
     readonly property var spectrum: values.spectrum
     readonly property var battery: values.battery
     readonly property var volume: values.volume
+    readonly property var equalizer: values.equalizer
     readonly property var pills: values.pills
     readonly property var notifications: values.notifications
     readonly property var bluetooth: values.bluetooth
     readonly property var wifi: values.wifi
+    readonly property var updates: values.updates
 
     // ---- wartości wyprowadzone ----
 

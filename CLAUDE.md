@@ -528,6 +528,82 @@ Pułapki:
   robią `showCardNotice`, które pamięta `cardBeforeNotice` i wraca do niej po
   zwinięciu — muzyka (`showNotice`) celowo nie wraca.
 
+### EqualizerService (korektor, lsp-plugins)
+
+Klik w wizualizator obok tytułu na karcie muzyki (`eqToggle`, słupki
+z `SpectrumBars`) otwiera `EqualizerPanel` na całej wyspie. Jak podgląd
+okładki — **nie jest kartą**: `eqView`/`eqShown` podmienia
+`expandedWidth/Height` na `eqWidth × eqHeight` (440 × 250) i gasi `cardStrip`.
+Zamyka go strzałka, zwinięcie wyspy i zmiana `currentKey`. Na czas korektora
+wyspa wyłącza swój `WheelHandler` (kółko należy do suwaków) i blokuje
+`showCardNotice` (przeciągany suwak zniknąłby spod kursora). `eqShown` celowo
+**nie** wymaga `hasPlayer` — zamknięcie odtwarzacza nie wyrywa panelu.
+
+- **Smart filter, nie domyślny sink.** `pipewire -c` z `filter-chain`
+  i wtyczką LV2 `para_equalizer_x16_stereo`; `capture.props` ma
+  `filter.smart = true` bez `filter.smart.target` = WirePlumber wpina filtr
+  przed DOMYŚLNE wyjście. Domyślny sink się nie zmienia (zmierzone), więc
+  `AudioService.current`, `routedHere` AirPodsów i głośność działają jak bez
+  korektora. Po zabiciu procesu strumienie same wracają do urządzenia.
+- Wejście filtra to `Audio/Sink`, więc **`AudioService.rebuild` wyklucza je po
+  nazwie** (`EqualizerService.sinkName`). `PwNode.properties` niezwiązanego
+  węzła są **puste** (zmierzone: 0 kluczy), więc `filter.smart` z nich nie
+  przeczytasz.
+- Wyłączony = **brak procesu**. Zmiana pasm idzie w locie `pw-cli set-param
+  <node.name> Props` (pw-cli przyjmuje nazwę węzła), throttling 40 ms.
+  `pw-cli` na nieistniejący węzeł kończy się kodem **0** z „unknown global" na
+  stderr — dlatego wysyłka czeka na pojawienie się węzła w
+  `Pipewire.nodes` i wtedy dosyła stan.
+- Porty LSP: `g_N` liniowo (0,0158–63), nie dB; `q_N` domyślnie **0** —
+  trzeba ustawić; `ft_N` = 1 (Bell), pasma 10–15 zostają Off. Nazwy w
+  `params` mają prefiks węzła grafu (`eq:g_0`), w `control` configu — nie.
+- Brak wtyczki: `pipewire` kończy się od razu kodem 234. Po dwóch takich
+  startach `available = false`; `setEnabled(true)` to nowa próba.
+- Stan (włączony, pasma, ustawienie, własne) w `equalizer.json` przez
+  FileView z `JSON.stringify` (nie JsonAdapter — własne to tablica obiektów),
+  obserwowany na żywo; własny zapis wraca przez obserwację i jest odsiewany
+  porównaniem z `snapshot()`.
+- **Test filtra zmienia dźwięk użytkownika.** Jego instancja czyta ten sam
+  `equalizer.json` i — przy włączonym korektorze — trzyma własny `island_eq`.
+  Sondy uruchamiaj z kopii z podmienioną ścieżką pliku, inną `sinkName` i
+  `filter.smart.target = { node.name = "<wyciszone wyjście>" }`. Poziom
+  mierz `pw-record --target <sinkName>_out`, nie z monitora urządzenia —
+  nagranie z monitora wyszło bez zmian przy działającym filtrze.
+
+### UpdateService (aktualizacje z gita)
+
+Przy starcie `git fetch origin master` w `Quickshell.shellDir`; commity
+`HEAD..origin/master` → `UpdatePanel` na całej wyspie (jak korektor: nie
+karta, podmienia `expandedWidth/Height`, gasi `cardStrip`, `WheelHandler`
+i `showNotice`/`showCardNotice`). `updateShown` sam trzyma wyspę rozwiniętą
+(jest w `expanded`) — pytanie przychodzi bez kursora i zwinięte by przepadło.
+Nakładka ma pierwszeństwo.
+
+- **Aktualizacja to przeładowanie na żywo.** Merge podmienia pliki, Quickshell
+  przeładowuje się i niszczy starą generację razem z jej `Process` — a ten
+  zabija dziecko, czyli gita w połowie checkoutu (`index.lock`, pół drzewa).
+  Dlatego `Quickshell.execDetached`, wynik plikiem
+  (`$XDG_RUNTIME_DIR/quickshell-island-update.txt`, zapis przez `mv`),
+  a stan (`phase`, lista, `tip`) w `PersistentProperties`: wynik czyta już
+  nowa generacja. Plik jest **odpytywany** (300 ms), nie obserwowany —
+  obserwacja nieistniejącego pliku nie łapie jego powstania.
+- `checked` idzie na `true` dopiero po ZAKOŃCZONYM sprawdzeniu: edycja pliku
+  w trakcie fetcha ubija proces i nowa generacja ma zacząć od nowa.
+  Przeładowanie bez edycji w tym czasie nie sprawdza drugi raz.
+- Merge idzie do `tip` (hash, który widział użytkownik), nie do
+  `origin/master` po nowym fetchu.
+- Odmowy (`dirty`, `ahead`, `branch`) liczy skrypt w chwili „Tak”, nie przy
+  sprawdzaniu. `dirty` pomija nieśledzone pliki (`--untracked-files=no`):
+  merge ich nie rusza, a kolizję z nowym plikiem z upstreamu git odrzuca
+  sam i kończy się to `failed` z jego komunikatem. Na innej gałęzi niż `master`
+  sprawdzania nie ma wcale (kod 21) — gałąź robocza to nie nasza sprawa.
+- **Testuj na kopii z lokalnym bare repo jako `origin`**, nigdy na tym
+  katalogu: „Tak” naprawdę scala, a działająca instancja użytkownika
+  przeładuje się razem z nim. W kopii podmień `resultPath` i ścieżkę
+  `update.json` (inaczej „Nie” zapisze się w `~/.config`). Zmierzone tak: przeładowanie w trakcie (commit zmieniający QML)
+  → nowa generacja kończy na „done”, `ahead` i `dirty` odmawiają, „Nie”
+  pomija commit przy drugim starcie.
+
 ### AudioService (wyjście dźwięku)
 
 Singleton nad `Quickshell.Services.Pipewire`. Sinki = węzły

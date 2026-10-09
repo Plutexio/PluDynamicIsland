@@ -173,6 +173,11 @@ Singleton {
         for (let i = 0; i < v.length; i++) {
             const n = v[i];
             if (n.isStream) continue;
+            // Korektor wyspy (EqualizerService) to też Audio/Sink, ale nie
+            // miejsce docelowe: WirePlumber sam wpina go przed domyślne
+            // wyjście. Po nazwie, nie po "filter.smart" — `properties`
+            // niezwiązanego węzła są puste (zmierzone: 0 kluczy).
+            if (n.name === EqualizerService.sinkName) continue;
             // AudioSink = Audio | Sink; strumienie aplikacji mają jeszcze bit Stream.
             if (n.isSink && n.type === PwNodeType.AudioSink) outSinks.push(n);
             else if (n.type === PwNodeType.AudioSource) outSources.push(n);

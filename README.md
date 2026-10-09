@@ -163,6 +163,9 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 | `IslandButton.qml` | Okrągły przycisk sterowania (hover: pierścień + powiększenie). |
 | `IslandIcon.qml` | Ikony (play/pause/next/prev, mikrofon, słuchawki, rozłącz, logo Discorda) rysowane wektorowo (`QtQuick.Shapes`). |
 | `CavaService.qml` | Singleton: spektrum dźwięku z [cavy](https://github.com/karlstav/cava). |
+| `SpectrumBars.qml` | Słupki widma — jeden komponent dla zwiniętej pigułki i wizualizatora na karcie muzyki. |
+| `EqualizerService.qml` | Singleton: 10-pasmowy korektor z lsp-plugins wpięty w PipeWire (smart filter), gotowe i własne ustawienia. |
+| `EqualizerPanel.qml` | Panel korektora na całą wyspę: przełącznik, ustawienia, suwaki pasm z krzywą. |
 | `DiscordService.qml` | Singleton: stan rozmowy głosowej i komendy mute/deafen/rozłącz przez mostek. |
 | `ScreencastService.qml` | Singleton: wykrywanie udostępniania ekranu z `pw-dump -m` (PipeWire). |
 | `ConnectivityCard.qml` | Karta łączności: przełączniki Wi‑Fi / Bluetooth, lista urządzeń Bluetooth. |
@@ -190,6 +193,8 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 | `airpods_bridge.py` | Mostek Python ↔ AirPodsy (protokół AAP po L2CAP), pilnuje połączenia przez D-Bus BlueZ. |
 | `IslandSwitch.qml` | Przełącznik w stylu iOS (tor + gałka), zgłasza `toggled`, stanu sam nie zmienia. |
 | `discord_bridge.py` | Mostek Python ↔ lokalne RPC Discorda (gniazdo unixowe), JSON linia po linii. |
+| `UpdateService.qml` | Singleton: przy starcie `git fetch`, nowe commity na `master` → pytanie, fast-forward po „Tak". |
+| `UpdatePanel.qml` | Pytanie o aktualizację na całą wyspę: lista commitów, Tak / Nie, wynik. |
 
 ## Wybór monitora
 
@@ -241,12 +246,14 @@ nie ruszają plików w gicie, a laptop i desktop mają własne wartości.
 Sekcje: `general` (monitor, język, odstęp od góry, animacje w pętli), `cards`
 (ukrywanie kart), `expand` (auto-rozwinięcia: czy i na ile), `clock` (formaty),
 `spectrum` (słupki, fps, wygładzanie, kolor z okładki), `battery` (obwódka,
-kolory, puls, poszerzenie przy ładowarce), `volume`, `pills` (pigułki rozmowy
-i udostępniania), `notifications`, `bluetooth`, `wifi`.
+kolory, puls, poszerzenie przy ładowarce), `volume`, `equalizer` (zapas na
+podbicia), `pills` (pigułki rozmowy i udostępniania), `notifications`,
+`bluetooth`, `wifi`, `updates` (sprawdzanie aktualizacji przy starcie).
 
 Poza plikiem zostały: sekrety Discorda (`discord.json`), przełącznik pauzy
 AirPodsów (`airpods.json`, zmienia go karta — plik z komentarzami nie dałby się
-nadpisać z wyspy bez ich utraty) i geometria (rozmiary kart, slotów i nakładek,
+nadpisać z wyspy bez ich utraty), stan korektora (`equalizer.json`, z tego
+samego powodu), pominięty commit aktualizacji (`update.json`) i geometria (rozmiary kart, slotów i nakładek,
 na górze `DynamicIsland.qml`), bo jej zmiana wymaga przeliczenia reszty układu.
 
 ### Animacje w pętli (`general.loopAnimations`)
@@ -269,6 +276,7 @@ Na górze `DynamicIsland.qml`:
 | `wheelStepDelta` | `120` | Ile `angleDelta` kółka na jedną kartę (120 = jeden ząbek). |
 | `overlayWidth` | `620` | Szerokość nakładek Wi‑Fi / Bluetooth (px). |
 | `overlayHeight` | `360` | Wysokość nakładek (px); wchodzi do wysokości okna zawsze, także przy zamkniętej nakładce. |
+| `eqWidth` × `eqHeight` | `440` × `250` | Wyspa z otwartym korektorem; szerokość nie mniejsza niż karta muzyki. |
 
 Rozmiary wyspy: `collapsedWidth/Height` oraz `cardWidths/cardHeights` per karta
 (`expandedWidth/Height` wynikają z aktywnej karty **albo z otwartej nakładki**).
@@ -812,6 +820,59 @@ Zmierzone na muzyce (punkty zmiany na sekundę, zakres 0–100):
 Poniżej ~15 skok między klatkami przekracza 4 punkty i pięć 2-pikselowych
 słupków zaczyna migotać.
 
+## Korektor (lsp-plugins)
+
+Na karcie muzyki, obok tytułu, stoi mały **wizualizator** — te same słupki
+z cavy co w pigułce, w kolorach okładki. Klik w niego zamienia wyspę
+(440 × 250) w **korektor**: 10 pasm co oktawę (31 Hz – 16 kHz, ±12 dB,
+krok 0,5 dB), gotowe ustawienia (Płasko, Bas, Soprany, Wokal, Rock, Pop,
+Elektronika, Jazz, Klasyka, Mowa) i własne.
+
+- **Suwak**: klik ustawia wartość tam, gdzie kliknięto, przeciąganie ją
+  zmienia, podwójny klik wraca do 0 dB, kółko to 1 dB na ząbek.
+- **Własne ustawienia**: `+` zapisuje bieżące pasma jako „Własny N" (do 8).
+  Poprawianie suwaków przy wybranym własnym zmienia je na bieżąco; przy
+  gotowym — stan przechodzi w „Własne ustawienia" i gotowe zostaje nietknięte.
+  Krzyżyk na zaznaczonym własnym go usuwa (pasma zostają). Nazwę zmienisz
+  w `~/.config/PluDynamicIsland/equalizer.json` — wyspa czyta plik na żywo.
+- **Przełącznik** w nagłówku włącza i wyłącza korektor. Dotknięcie suwaka albo
+  ustawienia włącza go sam — suwak bez słyszalnego skutku wygląda na zepsuty.
+  Włączony korektor poznasz po obwódce wizualizatora w kolorze widma.
+- Krzywa pod suwakami to suma filtrów (wzory RBJ) — przybliżenie kształtu,
+  które pokazuje, że sąsiednie podbicia sumują się ponad wartość suwaka.
+
+Wymaga `lsp-plugins-lv2` (wtyczka `para_equalizer_x16_stereo`) i WirePlumbera
+0.5+. Bez wtyczki filtr nie wstaje, a panel pisze to w nagłówku; ponowne
+włączenie przełącznikiem to nowa próba.
+
+### Jak to jest wpięte
+
+Filtr to proces `pipewire -c` z modułem **filter-chain**, dziecko wyspy, z wtyczką
+LV2 jako węzłem grafu. Wejście filtra ma `filter.smart = true` — WirePlumber
+sam wpina je przed **domyślne** wyjście i przenosi przy zmianie wyjścia.
+To inaczej niż w EasyEffects, gdzie wirtualny sink zostaje domyślnym:
+
+- domyślnym wyjściem zostaje prawdziwe urządzenie, więc głośność, pigułka
+  wyjścia i wykrywanie AirPodsów działają bez zmian,
+- cava słucha monitora urządzenia, więc widmo pokazuje dźwięk **po** korekcji,
+- wyłączony korektor (albo zamknięta wyspa) = brak procesu, strumienie
+  wracają prosto do urządzenia (zmierzone: przepinają się same).
+
+Zmiana pasm nie restartuje procesu: idzie w locie przez
+`pw-cli set-param island_eq Props '{ params = [ "eq:g_0" … ] }'`, najwyżej co
+40 ms przy przeciąganiu (jeden `pw-cli` to ~5 ms). LSP przyjmuje wzmocnienia
+**liniowo**, nie w dB (port `g_N`: 0,0158–63). Przy `equalizer.autoHeadroom`
+wejście jest ściszane o największe podbicie (`g_in`), żeby bas nie przesterował
+wyjścia.
+
+Zmierzone tonem 1 kHz przez filtr (na wyciszonym wyjściu wbudowanym):
+płasko −23,8 dBFS, pasmo 1 kHz na +12 dB → −11,8 dBFS, `g_out` = 0,1 w locie
+→ −31,8 dBFS.
+
+Korektor wyspy jest widoczny jako „Korektor wyspy" w mikserach PulseAudio
+(aplet głośności Plasmy, pavucontrol) — to jego wejście. Wyspa ukrywa go
+z własnej listy wyjść.
+
 ## Głośność
 
 Głośność siedzi w pigułce wyjścia na karcie muzyki — tej samej, która pokazuje,
@@ -863,6 +924,27 @@ i podniosła kartę muzyki ze 118 na 140 px, co było zauważalnie za dużo.
 Zmierzone: kolumna tytułu ma **202 px**, sama pigułka zajmuje 119 px, więc na
 suwak obok zostawało tylko ~75 px — za ciasno na wygodne chwytanie. Pigułka
 z wypełnieniem mieści się w 151 px i **nie kosztuje ani piksela wysokości**.
+
+## Aktualizacje
+
+Przy starcie wyspy (prawdziwym — nie przy przeładowaniu po edycji pliku)
+`UpdateService` robi `git fetch origin master`. Jeśli na `master` są commity,
+których nie ma lokalnie, wyspa sama się rozwija z ich listą i pyta
+„Zaktualizować teraz?”:
+
+- **Tak** — `git merge --ff-only` do commita z listy (bez ponownego fetcha,
+  więc dokładnie do tego, co było widać). Quickshell przeładowuje wyspę sam,
+  a panel pokazuje na chwilę „Zaktualizowano”.
+- **Nie** — ten commit jest pomijany na stałe
+  (`~/.config/PluDynamicIsland/update.json`); pytanie wróci przy następnym
+  nowym commicie.
+
+Aktualizacja odmawia (z powodem w panelu) przy: zmianach w śledzonych plikach,
+lokalnych commitach, których nie ma na `master`,
+i innej gałęzi. Nieśledzone pliki nie przeszkadzają — chyba że nowy commit
+dodaje plik o tej samej nazwie; wtedy git odmawia sam. Nic nie jest stashowane ani scalane — takie repo trzeba
+zaktualizować ręcznie. Na innej gałęzi niż `master` sprawdzania nie ma wcale.
+Brak sieci przy starcie: do 5 prób co minutę. Wyłączenie: `updates.check: false`.
 
 ## Uwaga o MPRIS
 
