@@ -436,6 +436,11 @@ kanał. Na stdout pełne migawki `type:"state"` tylko przy zmianie, na stdin
   uinput i KDE — liczy wciśnięcia (`STEM_GAP_MS`) i wysyła
   `{"type":"media","action":...}`; wykonuje wyspa (`onMediaAction`), stan
   odtwarzania wraca do mostka przez `AirPodsService.playing`.
+- Połączone **samodzielnie** (wyjęte z etui) AirPodsy zestawiają AAP i AVRCP,
+  ale nie A2DP — `Connected=true`, a wyjścia w PipeWire brak (w logu
+  bluetoothd nie ma wtedy `load_remote_sep`). Mostek 5 s po połączeniu szuka
+  `MediaTransport1` pod ścieżką urządzenia i bez niego woła
+  `ConnectProfile(A2DP Sink)`, asynchronicznie, do 3 prób.
 - Test zmiany trybu **przełącza słuchawki na uszach użytkownika** — uprzedź go
   i przywróć tryb po pomiarze.
 

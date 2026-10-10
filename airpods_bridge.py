@@ -57,6 +57,15 @@ CONNECT_DELAY_MS = 1500     # po Connected=true kanał AAP bywa jeszcze niegotow
 RETRY_MS = 5000             # kolejna próba, dopóki urządzenie jest połączone
 CONNECT_TIMEOUT_S = 5
 
+# Gdy AirPodsy łączą się same (wyjęte z etui), zestawiają ACL, AVRCP i AAP,
+# ale A2DP już nie — w PipeWire nie ma wtedy wyjścia, choć BlueZ mówi
+# Connected=true (zmierzone w logu bluetoothd: przy samodzielnym połączeniu
+# brak "load_remote_sep", przy kliknięciu jest). Po tylu ms od połączenia
+# mostek sprawdza, czy jest transport A2DP, i jeśli nie, dociąga profil sam.
+A2DP_CHECK_MS = 5000
+A2DP_ATTEMPTS = 3
+A2DP_SINK_UUID = "0000110b-0000-1000-8000-00805f9b34fb"
+
 # Po tylu ms od ostatniego wciśnięcia nóżki gest jest zamknięty: 1 = play/pauza,
 # 2 = następny, 3 = poprzedni. Zmierzone odstępy w podwójnym i potrójnym kliku:
 # 0,39–0,56 s — krótsze okno rozbijałoby wolniejszy podwójny klik na dwa
@@ -257,6 +266,8 @@ class Bridge:
         self.device_path = None      # urządzenie, z którym jest (albo ma być) sesja
         self.retry_source = None
         self.failed_attempts = 0
+        self.a2dp_source = None
+        self.a2dp_attempts = 0
 
         # Pakiet ucha podaje słuchawkę "główną" i "drugą", nie lewą i prawą.
         # Która jest główna, mówi kolejność w pakiecie baterii: pierwsza
@@ -333,6 +344,7 @@ class Bridge:
                 self.close_session()
                 self.device_path = None
                 self.cancel_retry()
+                self.cancel_a2dp_check()
         if "Alias" in changed and path == self.device_path:
             state["name"] = str(changed["Alias"])
             emit_state()
@@ -343,6 +355,61 @@ class Bridge:
         self.device_path = path
         self.failed_attempts = 0
         self.schedule_connect(CONNECT_DELAY_MS)
+        self.a2dp_attempts = 0
+        self.schedule_a2dp_check()
+
+    # ---- profil A2DP ----
+
+    def cancel_a2dp_check(self):
+        if self.a2dp_source is not None:
+            GLib.source_remove(self.a2dp_source)
+            self.a2dp_source = None
+
+    def schedule_a2dp_check(self):
+        self.cancel_a2dp_check()
+        self.a2dp_source = GLib.timeout_add(A2DP_CHECK_MS, self.check_a2dp)
+
+    def has_a2dp_transport(self):
+        # Transport (sepN/fdM) istnieje, dopóki strumień A2DP jest zestawiony,
+        # także w stanie "idle" przy uśpionym wyjściu — w przeciwieństwie do
+        # Connected, które obejmuje każdy profil, także samo AAP.
+        try:
+            manager = dbus.Interface(self.bus.get_object("org.bluez", "/"),
+                                     "org.freedesktop.DBus.ObjectManager")
+            objects = manager.GetManagedObjects()
+        except dbus.DBusException:
+            return True    # BlueZ nie odpowiada: nie ma czego naprawiać
+        prefix = self.device_path + "/"
+        return any(str(path).startswith(prefix) and "org.bluez.MediaTransport1" in ifaces
+                   for path, ifaces in objects.items())
+
+    def check_a2dp(self):
+        self.a2dp_source = None
+        if self.device_path is None or self.has_a2dp_transport():
+            return False
+        self.a2dp_attempts += 1
+        log(f"brak A2DP po połączeniu, dociągam profil (próba {self.a2dp_attempts})")
+        path = self.device_path
+        device = dbus.Interface(self.bus.get_object("org.bluez", path), "org.bluez.Device1")
+        # Asynchronicznie: ConnectProfile trwa kilka sekund, a w tym czasie
+        # pętla musi dalej czytać kanał AAP i stdin.
+        device.ConnectProfile(A2DP_SINK_UUID, timeout=30,
+                              reply_handler=lambda: self.on_a2dp_result(path, None),
+                              error_handler=lambda e: self.on_a2dp_result(path, e))
+        return False
+
+    def on_a2dp_result(self, path, error):
+        if path != self.device_path:
+            return    # rozłączone w trakcie
+        if error is None:
+            log("A2DP połączone")
+            return
+        name = error.get_dbus_name() if isinstance(error, dbus.DBusException) else ""
+        if name.endswith("AlreadyConnected"):
+            return
+        log(f"nie udało się połączyć A2DP: {error}")
+        if self.a2dp_attempts < A2DP_ATTEMPTS:
+            self.schedule_a2dp_check()
 
     # ---- sesja AAP ----
 
