@@ -62,6 +62,12 @@ obejrzeć. To jedyny sposób, żeby zobaczyć układ, zanim zobaczy go użytkown
 Uwaga: zrzut zrobiony w tym samym tiku co zmiana stanu łapie animacje `Behavior`
 **przed** startem (podświetlenie wygląda wtedy na nieistniejące) — daj timerowi
 kilkaset ms.
+`grabToImage` na `contentItem` okna (`PanelWindow`) nie działa („item has no
+QML engine") — żeby złapać wyspę razem z rodzeństwem (pigułki, ramka, fala),
+owiń w KOPII całą scenę w zwykły `Item` i łap jego. Zrzuty z działającego okna
+przychodzą ze zmiennym opóźnieniem (dwa zrzuty 150 ms od siebie potrafiły
+pokazać tę samą klatkę), więc stanów pośrednich animacji nie łap zegarem:
+spowolnij animację w sondzie (`duration: 8000`) i dopiero wtedy rób klatki.
 
 Czego **nie da się** tu sprawdzić: ruchu kursora. Brak `ydotool`/`dotool`, użytkownik
 nie jest w grupie `input`, a Wayland z założenia nie pozwala klientom przesuwać
@@ -782,6 +788,68 @@ Podłączenie/odłączenie ładowarki (`UPower.onBattery`) to zerknięcie
 zmienia się **przed** `displayDevice.ready`, stąd `knownPowerSource = -1`
 i ignorowanie zmian sprzed `available` — inaczej każdy start na baterii
 udawałby odłączenie.
+
+### Efekty (`effects` w konfiguracji)
+
+Osiem ozdobników, każdy z własnym przełącznikiem. Wszystkie jednorazowe, więc
+**nie** idą przez `loopAnimations` — nowy efekt w pętli już by musiał.
+
+- **Szklana krawędź** (`glassRim`): `Rectangle` nie umie gradientu na
+  ramce, więc to pierścień z dwóch `PathRectangle` w jednej ścieżce
+  z `OddEvenFill`, wypełniony gradientem. Rodzeństwo wyspy jak obwódka
+  baterii; przy włączonej `IslandClip` ma `border.width: 0`.
+- **Poświata** (`musicGlow`): `MultiEffect` z rozmyciem nad `ArtSwap`,
+  wystaje poza kartę o `glowBleed`, bo sprężyna wyspy przestrzela (~3%)
+  i przy dokładnym rozmiarze mignąłby ciemny pas na brzegu.
+- **Fala** (`EventRipple`): pierścienie idą za ANIMOWANĄ geometrią wyspy —
+  powiadomienie rozwija ją w tej samej chwili i fala liczona od pigułki
+  zostałaby pod nią. `startupGraceMs`, bo przeładowanie na żywo w trakcie
+  rozmowy zgłasza `inVoice` od nowa.
+- **Kropla** (`LiquidPill`): pigułki leżą POD wyspą (`z: -0.5`) i wypływają
+  spod jej krawędzi; pozycję liczy pigułka, właściciel daje `originEdge`
+  i `implicitWidth`. Szyjka pęka po odstępie w px, nie po postępie
+  animacji — próg z postępu (0,72) przypadał, zanim pigułka wyjechała spod
+  wyspy (szczelina otwiera się przy h / (gap + h) ≈ 0,81), i szyjki nie było
+  widać. Pigułka odjeżdża ZA miejsce spoczynku (`stretchGap` ≈ 18 px), bo
+  szyjka musi pęknąć przed spoczynkiem, a przy zakresie 0–7 px żyła ułamek
+  sekundy; potem wraca `OutElastic`. Pęknięcie jest zatrzaskiem
+  (`snapped`) — przy chybotaniu pigułka podjeżdża bliżej i szyjka by
+  wracała. Kropla jest kryjąca od razu: wygaszanie 220 ms robiło z niej
+  szary, półprzezroczysty kształt i całe wypływanie ginęło. Wyspa wracająca z rozwinięcia jest jeszcze szeroka, więc pigułka
+  czeka (`originBusy` ← `islandShrinking`). `pillHoverArea` zostaje w miejscu
+  spoczynku — `voicePill.implicitWidth` to pełna szerokość, nie animowana.
+- **Głębia karuzeli** (`CardSlot`): odległość od `stripOffset`, więc
+  w spoczynku i przy kartach stawianych przez wyspę (bez animacji paska)
+  nic się nie dzieje.
+- **Kaskada** (`CascadeShift`): to `Translate`, nie `opacity` ani `y` —
+  bloki kart mają własne powiązania opacity (okładka chowa się na czas
+  podglądu), a `y` ustawiają layouty. Wygaszanie robi `cardStrip.opacity`.
+  Startuje z `CardSlot.current`; karty w osobnych plikach dostają `active`.
+- **Zmiana utworu**: `ArtSwap` nie obraca sam siebie, tylko wystawia
+  `flipAngle` — obrót obrazka wewnątrz płaskiego, zaokrąglonego przycięcia
+  wyglądałby jak przesuwanie. Przejście startuje, gdy nowa okładka jest
+  wczytana (inaczej mignąłby pusty kwadrat). `art.ready` zastąpiło
+  `art.status === Image.Ready`.
+  Zmiana w trakcie przejścia **czeka** na jego koniec (`onFinished` woła
+  `load()`): tylna warstwa jest wtedy starą okładką na ekranie, a
+  `onFinished` ją czyści — wczytywana tam nowa przepadała i przy szybkim
+  przełączaniu zostawała poprzednia okładka. Okładki lokalne ładują się za
+  szybko, żeby to złapać; odtwarza się serwerem HTTP z opóźnieniem 0,7 s
+  (jak okładki Spotify) i serią przełączeń co 900 ms.
+  Dwie kolejne pułapki tego samego miejsca: okładka **z bufora** jest
+  gotowa już w trakcie przypisania `source`, więc `statusChanged` woła
+  `swapNow` sam — drugie wywołanie z `load()` zamieniało warstwy z powrotem
+  i obrót kręcił się w kółko ze starą okładką (zmierzone: 24 zamiany
+  na 4 zmiany przy skakaniu między dwiema znanymi okładkami). Stąd
+  sprawdzenie, czy warstwa wciąż jest tylna. A `Image.source` normalizuje
+  url (`%20` wraca jako spacja), więc porównania idą po własnych kluczach
+  (`keyA`/`keyB`), nie po `source` — inaczej okładka z zakodowaną ścieżką
+  nie zmieniała się wcale.
+- **Zegar-licznik** (`RollingDigits`): cyfry tabelaryczne (`tnum`)
+  konieczne — przy proporcjonalnych przejście 10 → 11 zmieniałoby
+  szerokość zegara w trakcie animacji.
+- Na `readonly property` nie da się postawić `Behavior` — błąd ładowania
+  całej konfiguracji („is a read-only property").
 
 ### IslandConfig (konfiguracja użytkownika)
 

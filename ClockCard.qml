@@ -35,6 +35,8 @@ Item {
     // Karta widoczna na rozwiniętej wyspie. Zejście z niej zamyka wybierak —
     // inaczej następne otwarcie karty zaczynałoby od pół-wybranego minutnika.
     property bool active: false
+    // Cyfry zegara przewijają się przy zmianie (RollingDigits).
+    property bool rollingDigits: true
 
     // Wybierak nowego minutnika: krok kółka w minutach (z Shiftem większy),
     // presety i zakres. Ostatni wybór zostaje na następny raz.
@@ -83,6 +85,7 @@ Item {
     Item {
         id: clockColumn
 
+        transform: CascadeShift { step: 0; shown: card.active }
         x: card.wide ? 14 : 0
         width: card.wide ? card.clockColumnWidth : card.width
         height: card.height
@@ -93,12 +96,13 @@ Item {
 
             // Na szerokiej karcie mniejszy: przy 30 px "20:12:44" zaczynał
             // się pod plusikiem w rogu (zmierzone zrzutem).
-            Text {
+            RollingDigits {
                 Layout.alignment: Qt.AlignHCenter
                 text: Qt.formatTime(card.date, card.timeFormat)
                 color: "#f5f5f5"
-                font.pixelSize: card.wide ? 26 : 30
-                font.weight: Font.Light
+                pixelSize: card.wide ? 26 : 30
+                weight: Font.Light
+                animated: card.rollingDigits
             }
 
             Text {
@@ -137,6 +141,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: card.listBottomMargin
         visible: card.hasTimers && !card.adding
+        transform: CascadeShift { step: 1; shown: card.active }
 
         // Granica listy: patrz ConnectivityCard — bez tego kółko na końcu
         // listy przełączałoby kartę.

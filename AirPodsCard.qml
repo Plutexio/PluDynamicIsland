@@ -25,6 +25,10 @@ Item {
     implicitWidth: 440
     implicitHeight: 150
 
+    // Karta jest teraz na wyspie — od tego startuje wejście kaskadowe
+    // bloków (CascadeShift).
+    property bool active: false
+
     // ---------------------------------------------------------------
     // Stan
     // ---------------------------------------------------------------
@@ -164,6 +168,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
+            transform: CascadeShift { step: 0; shown: card.active }
 
             IslandIcon {
                 Layout.alignment: Qt.AlignVCenter
@@ -193,6 +198,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
+            transform: CascadeShift { step: 1; shown: card.active }
 
             BatteryTile {
                 icon: "budLeft"
@@ -221,6 +227,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
+            transform: CascadeShift { step: 2; shown: card.active }
 
             // Jedna MouseArea na cały pasek zamiast czterech: jeden `hovering`
             // do zgłoszenia wyspie, a segment pod kursorem liczymy z mouseX.

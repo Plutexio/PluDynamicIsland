@@ -33,6 +33,10 @@ Item {
     implicitWidth: 440
     implicitHeight: popup ? popupHeight : historyHeight
 
+    // Karta jest teraz na wyspie — od tego startuje wejście kaskadowe
+    // bloków (CascadeShift).
+    property bool active: false
+
     // ---------------------------------------------------------------
     // Stan
     // ---------------------------------------------------------------
@@ -126,6 +130,7 @@ Item {
         Item {
             id: hero
 
+            transform: CascadeShift { step: 0; shown: card.active }
             Layout.fillWidth: true
             Layout.preferredHeight: 66
             Layout.fillHeight: card.popup
@@ -357,6 +362,7 @@ Item {
             Layout.fillWidth: true
             spacing: 6
             visible: !card.popup
+            transform: CascadeShift { step: card.hasHero ? 1 : 0; shown: card.active }
 
             Text {
                 Layout.fillWidth: true
@@ -386,6 +392,7 @@ Item {
             Layout.fillHeight: true
             clip: true
             visible: !card.popup
+            transform: CascadeShift { step: card.hasHero ? 2 : 1; shown: card.active }
 
             // Połyka kółko na granicy listy, żeby nie przełączało karty —
             // szczegóły przy bliźniaczym handlerze w ConnectivityCard.

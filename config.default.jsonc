@@ -189,6 +189,20 @@
         "autoHeadroom": true
     },
 
+    // ---- efekty -------------------------------------------------------
+    // Ozdobniki. Wszystkie są jednorazowe (grają przy zdarzeniu i stają),
+    // więc nie obciążają GPU w spoczynku tak jak animacje w pętli.
+    "effects": {
+        "glassEdge": true,      // ramka wyspy jaśniejsza u góry, jak szkło
+        "artGlow": true,        // rozmyta okładka i poświata w jej kolorze na karcie muzyki
+        "ripple": true,         // fala wokół wyspy przy powiadomieniu, AirPodsach, minutniku…
+        "liquidPills": true,    // pigułki obok wyspy wypływają z niej jak kropla
+        "carouselDepth": true,  // przewijane karty oddalają się i przygasają
+        "cascade": true,        // treść karty wpływa po kolei po rozwinięciu
+        "trackChange": true,    // okładka obraca się, tytuł wjeżdża przy zmianie utworu
+        "rollingClock": true    // cyfry zegara przewijają się jak w liczniku
+    },
+
     // ---- małe pigułki obok wyspy -------------------------------------
     "pills": {
         "voice": true,          // rozmowa na Discordzie: kanał + czas

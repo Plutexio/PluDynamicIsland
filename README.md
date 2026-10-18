@@ -212,6 +212,13 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 | `discord_bridge.py` | Mostek Python ↔ lokalne RPC Discorda (gniazdo unixowe), JSON linia po linii. |
 | `UpdateService.qml` | Singleton: przy starcie `git fetch`, nowe commity na `master` → pytanie, fast-forward po „Tak". |
 | `UpdatePanel.qml` | Pytanie o aktualizację na całą wyspę: lista commitów, Tak / Nie, wynik. |
+| `CardSlot.qml` | Slot karuzeli kart z głębią przy przewijaniu (skala + przygaszenie od odległości). |
+| `CascadeShift.qml` | Wejście kaskadowe bloków karty — `Translate` z opóźnieniem zależnym od kroku. |
+| `ArtSwap.qml` | Okładka z przejściem przy zmianie utworu: obrót wokół osi Y albo przenikanie. |
+| `RollingText.qml` | Tekst, który przy zmianie wjeżdża od dołu (tytuł, wykonawca). |
+| `RollingDigits.qml` | Zegar jak licznik: przewija się tylko zmieniona cyfra. |
+| `LiquidPill.qml` | Pigułka obok wyspy, która wypływa z niej jak kropla (szyjka między nimi). |
+| `EventRipple.qml` | Fala wokół wyspy przy zdarzeniu (powiadomienie, AirPodsy, minutnik, ładowarka, kanał). |
 
 ## Wybór monitora
 
@@ -283,6 +290,34 @@ animacji to przerysowanie całego ekranu w kompozytorze. Zmierzone na laptopie
 (Intel UHD 630, 4K, Hyprland z rozmyciem): puls obwódki trzymał GPU na 74%
 zajętości, bez niego 11%. Z tego samego powodu `spectrum.framerate` = 0 daje
 60 fps na desktopie i 30 na laptopie.
+
+### Efekty (`effects`)
+
+Osiem przełączników, każdy efekt osobno. Wszystkie są **jednorazowe** — grają
+przy zdarzeniu i stają, więc nie podlegają `loopAnimations` i w spoczynku nic
+nie kosztują:
+
+| Klucz | Co robi |
+| --- | --- |
+| `glassEdge` | Ramka wyspy z gradientem (jasna u góry), na karcie muzyki dół łapie kolor widma. |
+| `artGlow` | Rozmyta okładka pod kartą muzyki + poświata w kolorze widma od dołu. |
+| `ripple` | Fala wokół wyspy: powiadomienie i AirPodsy (biała), minutnik (pomarańczowa), ładowarka (zielona), wejście na kanał (fioletowa). |
+| `liquidPills` | Pigułki rozmowy / udostępniania / minutnika wypływają spod wyspy jak kropla. |
+| `carouselDepth` | Przewijane kółkiem karty maleją do 90% i przygasają do 35% na odległość slotu. |
+| `cascade` | Bloki karty (okładka, tekst, przyciski) wpływają po kolei, co 55 ms. |
+| `trackChange` | Okładka obraca się wokół osi Y, tytuł i wykonawca wjeżdżają od dołu; okładka w poświacie przenika. |
+| `rollingClock` | Cyfry zegara (pigułka i karta zegara) przewijają się jak w liczniku. |
+
+Liczby dobrane zrzutami (`grabToImage` w kopii projektu, animacje spowolnione
+do 8 s, żeby złapać stany pośrednie): poświata `artGlowOpacity` 0,42 i
+`artGlowTint` 0,22 zostawiają czytelny szary tekst wykonawcy także na jasnej
+okładce. Kropla: pigułka odjeżdża do odstępu `stretchGap` = max(16, 2,2 ×
+`pills.gap`) (≈ 18 px), szyjka pęka 2 px wcześniej, potem pigułka wraca na
+miejsce sprężyście (`OutElastic`, 700 ms). Przy pierwszej wersji szyjka pękała
+przy ~7 px, czyli przed spoczynkiem, i żyła ułamek sekundy — na zrzutach
+spowolnionych ×8 było ją widać w jednej klatce na kilkanaście; teraz w kilku,
+przez ~200 ms. Przewężenie rośnie z potęgą 1,8 odstępu, więc szyjka długo
+trzyma grubość.
 
 ### Geometria (w kodzie)
 

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Layouts
 import QtQuick.Shapes
 import Quickshell
@@ -140,6 +141,25 @@ PanelWindow {
     readonly property bool timerPillEnabled: IslandConfig.pills.timer
     readonly property int pillGap: IslandConfig.pills.gap             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
     readonly property int pillMaxWidth: IslandConfig.pills.maxWidth   // dłuższe nazwy kanałów / aplikacji są obcinane
+
+    // Efekty (opis w config.default.jsonc). Fala, ciecz pigułek i kaskada
+    // czytają swoje przełączniki same, w EventRipple / LiquidPill / CascadeShift.
+    readonly property bool glassEdge: IslandConfig.effects.glassEdge
+    readonly property bool artGlow: IslandConfig.effects.artGlow
+    readonly property bool carouselDepth: IslandConfig.effects.carouselDepth
+    readonly property bool trackChangeEffect: IslandConfig.effects.trackChange
+    readonly property bool rollingClock: IslandConfig.effects.rollingClock
+    // Kolory fali: zwykłe zdarzenie, minutnik, ładowarka, wejście na kanał.
+    property color rippleColor: "#f2f2f2"
+    property color rippleTimerColor: "#ff9f0a"
+    property color rippleChargeColor: "#30d158"
+    property color rippleVoiceColor: "#5865f2"
+    // Szklana ramka: grubość w px (1 = jak dawna ramka).
+    property real glassRimWidth: 1
+    // Poświata karty muzyki: krycie rozmytej okładki (0–1) i krycie koloru
+    // widma u dołu karty. Wyżej tekst traci kontrast na jasnych okładkach.
+    property real artGlowOpacity: 0.42
+    property real artGlowTint: 0.22
 
     // Rozmiar nakładek (Wi-Fi, Bluetooth). Wpisany tutaj, a nie brany
     // z implicitWidth panelu, bo panele siedzą w Loaderze i przy zamkniętej
@@ -373,8 +393,10 @@ PanelWindow {
         const now = UPower.onBattery ? 1 : 0;
         const changed = root.knownPowerSource >= 0 && now !== root.knownPowerSource;
         root.knownPowerSource = now;
-        if (!changed || !root.powerNoticeEnabled) return;
+        if (!changed) return;
         const onBattery = now === 1;
+        if (!onBattery) ripple.play(root.rippleChargeColor);
+        if (!root.powerNoticeEnabled) return;
         GlanceService.show({
             key: "power",
             icon: "bolt",
@@ -484,6 +506,7 @@ PanelWindow {
         target: TimerService
 
         function onRang(timer) {
+            ripple.play(root.rippleTimerColor);
             if (root.expandOnTimer) root.showCardNotice(root.cardClock, root.timerNoticeDuration);
         }
     }
@@ -810,6 +833,7 @@ PanelWindow {
         target: NotificationService
 
         function onNotified(entry) {
+            ripple.play(root.rippleColor);
             if (root.expandOnNotification) root.showCardNotice(root.cardNotifications, root.notificationDuration);
         }
         function onJobStarted(job) {
@@ -848,6 +872,7 @@ PanelWindow {
         }
 
         function onArrived() {
+            ripple.play(root.rippleColor);
             if (root.expandOnAirPods) root.showCardNotice(root.cardAirPods, root.airPodsNoticeDuration);
         }
 
@@ -912,6 +937,7 @@ PanelWindow {
         target: DiscordService
 
         function onInVoiceChanged() {
+            if (DiscordService.inVoice) ripple.play(root.rippleVoiceColor);
             if (!DiscordService.inVoice && root.currentCard === root.cardDiscord)
                 root.setCard(root.hasPlayer ? root.cardMusic : root.cardClock, false);
         }
@@ -1137,7 +1163,8 @@ PanelWindow {
         radius: root.expanded ? 30 : height / 2
 
         color: "#0a0a0c"
-        border.width: 1
+        // Ze szklaną krawędzią ramkę rysuje glassRim (gradient), nie IslandClip.
+        border.width: root.glassEdge ? 0 : 1
         border.color: Qt.rgba(1, 1, 1, 0.08)
         contentUnderBorder: true
 
@@ -1337,11 +1364,13 @@ PanelWindow {
                 }
             }
 
-            Text {
+            RollingDigits {
+                Layout.alignment: Qt.AlignVCenter
                 text: Qt.formatTime(clock.date, root.clockPillFormat)
                 color: "#f2f2f2"
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
+                pixelSize: 14
+                weight: Font.DemiBold
+                animated: root.rollingClock
             }
 
             // Wizualizacja spektrum z cavy w miejscu dawnej kropki statusu.
@@ -1459,13 +1488,13 @@ PanelWindow {
             }
 
             // ---- karta: muzyka ----
-            Item {
+            CardSlot {
                 id: musicSlot
-
-                x: root.cardMusic * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardMusic >= 0
+                card: root.cardMusic
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 // Z odtwarzaczem: okładka, tytuł, postęp, kontrolki.
                 Item {
@@ -1475,6 +1504,52 @@ PanelWindow {
                     width: root.cardWidths[root.cardMusic]
                     height: root.cardHeights[root.cardMusic]
                     visible: root.hasPlayer
+
+                    // Poświata: rozmyta okładka pod treścią i światło w kolorze
+                    // widma od dołu. Wystaje poza kartę o glowBleed, bo wyspa
+                    // przestrzela sprężyną (~3%) i przy dokładnym rozmiarze na
+                    // brzegach mignąłby ciemny pas. Rozmycie liczy się tylko
+                    // przy zmianie okładki — źródło stoi, więc w spoczynku to
+                    // jeden prostokąt z gotowej tekstury.
+                    Item {
+                        id: musicGlow
+
+                        readonly property int glowBleed: 24
+
+                        anchors.fill: parent
+                        anchors.margins: -glowBleed
+                        visible: root.artGlow && glowArt.ready
+
+                        ArtSwap {
+                            id: glowArt
+                            anchors.fill: parent
+                            visible: false
+                            source: root.artGlow ? root.artUrl : ""
+                            sourceSize: Qt.size(48, 48)
+                            animated: root.trackChangeEffect
+                            duration: 700
+                        }
+
+                        MultiEffect {
+                            anchors.fill: parent
+                            source: glowArt
+                            autoPaddingEnabled: false
+                            blurEnabled: true
+                            blur: 1
+                            blurMax: 48
+                            saturation: 0.25
+                            brightness: -0.12
+                            opacity: root.artGlowOpacity
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: "transparent" }
+                                GradientStop { position: 1; color: Qt.alpha(root.spectrumColor, root.artGlowTint) }
+                            }
+                        }
+                    }
 
                     RowLayout {
                         id: musicRow
@@ -1501,23 +1576,33 @@ PanelWindow {
                                 NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
                             }
 
+                            // Obrót przy zmianie utworu kręci całym zaokrąglonym
+                            // kafelkiem (patrz ArtSwap), a nie obrazkiem w środku.
+                            transform: [
+                                Rotation {
+                                    origin.x: musicArt.width / 2
+                                    origin.y: musicArt.height / 2
+                                    axis { x: 0; y: 1; z: 0 }
+                                    angle: art.flipAngle
+                                },
+                                CascadeShift { step: 0; shown: musicSlot.current }
+                            ]
+
                             IslandIcon {
                                 anchors.centerIn: parent
                                 kind: "play"
                                 size: 26
                                 color: "#4a4a52"
-                                visible: art.status !== Image.Ready
+                                visible: !art.ready
                             }
 
-                            Image {
+                            ArtSwap {
                                 id: art
                                 anchors.fill: parent
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                cache: true
-                                sourceSize.width: 144
-                                sourceSize.height: 144
                                 source: root.artUrl
+                                sourceSize: Qt.size(144, 144)
+                                animated: root.trackChangeEffect
+                                flip: true
                             }
 
                             // Bez hovera, więc nie zabiera go podkładce i nie musi
@@ -1526,7 +1611,7 @@ PanelWindow {
                             MouseArea {
                                 id: artClick
                                 anchors.fill: parent
-                                enabled: art.status === Image.Ready
+                                enabled: art.ready
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     root.eqView = false;
@@ -1539,18 +1624,19 @@ PanelWindow {
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignVCenter
                             spacing: 2
+                            transform: CascadeShift { step: 1; shown: musicSlot.current }
 
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
 
-                                Text {
+                                RollingText {
                                     Layout.fillWidth: true
-                                    elide: Text.ElideRight
                                     text: root.trackTitle !== "" ? root.trackTitle : "Nic nie gra"
                                     color: "#f5f5f5"
                                     font.pixelSize: 15
                                     font.weight: Font.DemiBold
+                                    animated: root.trackChangeEffect
                                 }
 
                                 // Wizualizator, jak fala w rozwiniętej wyspie iOS.
@@ -1598,13 +1684,16 @@ PanelWindow {
                                 }
                             }
 
-                            Text {
+                            RollingText {
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
                                 text: root.trackArtist
                                 color: "#9a9aa2"
                                 font.pixelSize: 12
                                 visible: root.trackArtist !== ""
+                                animated: root.trackChangeEffect
+                                // Wykonawca dojeżdża odrobinę wolniej niż tytuł —
+                                // schodkiem wygląda to na jedną zmianę, a nie dwie naraz.
+                                duration: 460
                             }
 
                             // Wyjście dźwięku i głośność w jednym: klik w ikonę
@@ -1661,6 +1750,7 @@ PanelWindow {
                             // 7 zamiast 5, żeby pierścienie hovera sąsiadów się nie stykały
                             spacing: 7
                             Layout.alignment: Qt.AlignVCenter
+                            transform: CascadeShift { step: 2; shown: musicSlot.current }
 
                             IslandButton {
                                 id: btnPrev
@@ -1697,6 +1787,7 @@ PanelWindow {
                     RowLayout {
                         anchors.centerIn: parent
                         spacing: 12
+                        transform: CascadeShift { shown: musicSlot.current }
 
                         Rectangle {
                             Layout.preferredWidth: 44
@@ -1739,26 +1830,31 @@ PanelWindow {
             }
 
             // ---- karta AirPodsów (tylko przy połączonych słuchawkach) ----
-            Item {
-                x: root.cardAirPods * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardAirPods >= 0
+            CardSlot {
+                id: airpodsSlot
+                card: root.cardAirPods
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 AirPodsCard {
                     id: airpods
                     anchors.centerIn: parent
                     width: implicitWidth
                     height: implicitHeight
+                    active: airpodsSlot.current
                 }
             }
 
             // ---- karta: Discord ----
-            Item {
-                x: root.cardDiscord * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardDiscord >= 0
+            CardSlot {
+                id: discordSlot
+                card: root.cardDiscord
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 Item {
                     anchors.centerIn: parent
@@ -1777,6 +1873,7 @@ PanelWindow {
                             Layout.alignment: Qt.AlignVCenter
                             radius: 17
                             color: "#17171a"
+                            transform: CascadeShift { step: 0; shown: discordSlot.current }
 
                             IslandIcon {
                                 anchors.centerIn: parent
@@ -1794,6 +1891,7 @@ PanelWindow {
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignVCenter
                             spacing: 2
+                            transform: CascadeShift { step: 1; shown: discordSlot.current }
 
                             Text {
                                 Layout.fillWidth: true
@@ -1841,6 +1939,7 @@ PanelWindow {
                         RowLayout {
                             spacing: 7
                             Layout.alignment: Qt.AlignVCenter
+                            transform: CascadeShift { step: 2; shown: discordSlot.current }
 
                             IslandButton {
                                 id: btnMic
@@ -1872,11 +1971,13 @@ PanelWindow {
             }
 
             // ---- karta: zegar + minutniki KClock ----
-            Item {
-                x: root.cardClock * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardClock >= 0
+            CardSlot {
+                id: clockSlot
+                card: root.cardClock
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 ClockCard {
                     id: clockCard
@@ -1889,22 +1990,26 @@ PanelWindow {
                     dateFormat: root.clockDateFormat
                     localeName: root.uiLocale
                     timersEnabled: root.timersEnabled
-                    active: root.expanded && root.currentKey === "clock" && cardStrip.shown
+                    rollingDigits: root.rollingClock
+                    active: clockSlot.current
                 }
             }
 
             // ---- karta: łączność (Wi-Fi, Bluetooth, urządzenia) ----
-            Item {
-                x: root.cardConnectivity * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardConnectivity >= 0
+            CardSlot {
+                id: connectivitySlot
+                card: root.cardConnectivity
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 ConnectivityCard {
                     id: connectivity
                     anchors.centerIn: parent
                     width: implicitWidth
                     height: implicitHeight
+                    active: connectivitySlot.current
 
                     onOpenWifi: root.openOverlay("wifi")
                     onOpenBluetooth: root.openOverlay("bluetooth")
@@ -1912,17 +2017,20 @@ PanelWindow {
             }
 
             // ---- karta: powiadomienia i transfery ----
-            Item {
-                x: root.cardNotifications * root.slotWidth
-                width: root.slotWidth
-                height: parent.height
-                visible: root.cardNotifications >= 0
+            CardSlot {
+                id: notificationsSlot
+                card: root.cardNotifications
+                slotWidth: root.slotWidth
+                stripOffset: cardStrip.stripOffset
+                depth: root.carouselDepth
+                current: cardStrip.shown && root.currentCard === card
 
                 NotificationCard {
                     id: notifications
                     anchors.centerIn: parent
                     width: implicitWidth
                     height: implicitHeight
+                    active: notificationsSlot.current
                 }
             }
         }
@@ -2277,6 +2385,68 @@ PanelWindow {
     }
 
     // ---------------------------------------------------------------
+    // Szklana krawędź i fala przy zdarzeniach
+    // ---------------------------------------------------------------
+
+    // Ramka z gradientem zamiast jednolitej: jaśniejsza u góry, gasnąca
+    // w dół — wyspa wygląda na wypukłą, a nie na płaską czarną plamę.
+    // Rectangle nie umie gradientu na ramce, więc to pierścień wypełniony
+    // gradientem: dwa zaokrąglone prostokąty w jednej ścieżce z OddEvenFill
+    // (zewnętrzny minus wewnętrzny). Rodzeństwo wyspy, jak obwódka baterii —
+    // IslandClip rysowałby treść nad nim. Na karcie muzyki z poświatą dół
+    // ramki łapie kolor widma.
+    Shape {
+        id: glassRim
+
+        readonly property real w: root.glassRimWidth
+        readonly property real r: Math.min(island.radius, height / 2)
+        property color bottomColor: musicGlow.visible && root.currentKey === "music" && root.expanded
+                                             && cardStrip.shown
+            ? Qt.alpha(root.spectrumColor, 0.32) : Qt.rgba(1, 1, 1, 0.07)
+        Behavior on bottomColor { ColorAnimation { duration: 400 } }
+
+        x: island.x
+        y: island.y
+        width: island.width
+        height: island.height
+        scale: island.scale
+        visible: root.glassEdge
+        preferredRendererType: Shape.CurveRenderer
+
+        ShapePath {
+            fillRule: ShapePath.OddEvenFill
+            strokeColor: "transparent"
+            strokeWidth: 0
+            fillGradient: LinearGradient {
+                x1: 0; y1: 0
+                x2: 0; y2: glassRim.height
+                GradientStop { position: 0; color: Qt.rgba(1, 1, 1, 0.26) }
+                GradientStop { position: 0.45; color: Qt.rgba(1, 1, 1, 0.06) }
+                GradientStop { position: 1; color: glassRim.bottomColor }
+            }
+
+            PathRectangle {
+                width: glassRim.width
+                height: glassRim.height
+                radius: glassRim.r
+            }
+            PathRectangle {
+                x: glassRim.w
+                y: glassRim.w
+                width: glassRim.width - 2 * glassRim.w
+                height: glassRim.height - 2 * glassRim.w
+                radius: Math.max(0, glassRim.r - glassRim.w)
+            }
+        }
+    }
+
+    EventRipple {
+        id: ripple
+        anchors.fill: parent
+        target: island
+    }
+
+    // ---------------------------------------------------------------
     // Obwódka baterii — pasek postępu po obrysie zwiniętej pigułki
     // ---------------------------------------------------------------
 
@@ -2367,36 +2537,29 @@ PanelWindow {
     // Pigułka rozmowy — obok zwiniętej wyspy, tylko podczas rozmowy
     // ---------------------------------------------------------------
 
-    Rectangle {
+    // Pigułki leżą pod wyspą (z ujemne) i wypływają spod jej krawędzi — patrz
+    // LiquidPill. Kursora nie łapią same: pigułka rozmowy ma podkładkę
+    // pillHoverArea w miejscu spoczynku, reszta jest czysto informacyjna.
+    // Wyspa w chwili pojawienia się pigułki bywa jeszcze szersza (wraca
+    // z rozwinięcia albo zerknięcia) — wtedy pigułka czeka (originBusy).
+    readonly property bool islandShrinking: island.width > root.collapsedWidth + 2
+
+    LiquidPill {
         id: voicePill
 
-        readonly property bool shown: root.inVoice && root.voicePillEnabled && !root.expanded && !root.restingWide
+        // visible ustawione twardo (w LiquidPill), nie z opacity: pigułka ma
+        // zniknąć w chwili rozwinięcia, żeby nie wystawała spod rosnącej wyspy.
+        // Animowane jest tylko pojawianie się.
+        shown: root.inVoice && root.voicePillEnabled && !root.expanded && !root.restingWide
 
-        x: pillHoverArea.x
+        z: -0.5
+        toRight: true
+        originEdge: Math.round((root.width + root.collapsedWidth) / 2)
+        gap: root.pillGap
+        originBusy: root.islandShrinking
         y: pillHoverArea.y
         height: root.collapsedHeight
         implicitWidth: Math.min(root.pillMaxWidth, pillRow.implicitWidth + 24)
-        width: implicitWidth
-        radius: height / 2
-
-        color: "#0a0a0c"
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.08)
-
-        // visible ustawione twardo, nie z opacity: pigułka ma zniknąć w chwili
-        // rozwinięcia, żeby nie wystawała spod rosnącej wyspy. Animowane jest
-        // tylko pojawianie się.
-        visible: shown
-        opacity: shown ? 1 : 0
-        scale: shown ? 1 : 0.9
-        transformOrigin: Item.Left
-
-        Behavior on opacity {
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-        }
-        Behavior on scale {
-            NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-        }
 
         RowLayout {
             id: pillRow
@@ -2459,34 +2622,21 @@ PanelWindow {
     // Czysto informacyjna: nie ma podkładki hovera ani regionu w masce, więc
     // kursor przechodzi przez nią do okien pod spodem. Nie ma karty, którą
     // mogłaby otwierać — udostępnianie to stan, nie sterowanie.
-    Rectangle {
+    LiquidPill {
         id: screencastPill
 
-        readonly property bool shown: PrivacyService.screenActive && root.screencastPillEnabled
-                                      && !root.expanded && !root.restingWide
+        shown: PrivacyService.screenActive && root.screencastPillEnabled
+               && !root.expanded && !root.restingWide
 
         // Lewa strona, lustrzanie do pigułki rozmowy po prawej.
-        x: Math.round((root.width - root.collapsedWidth) / 2) - root.pillGap - width
+        z: -0.5
+        toRight: false
+        originEdge: Math.round((root.width - root.collapsedWidth) / 2)
+        gap: root.pillGap
+        originBusy: root.islandShrinking
         y: root.topMargin
         height: root.collapsedHeight
-        width: Math.min(root.pillMaxWidth, screencastRow.implicitWidth + 24)
-        radius: height / 2
-
-        color: "#0a0a0c"
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.08)
-
-        visible: shown
-        opacity: shown ? 1 : 0
-        scale: shown ? 1 : 0.9
-        transformOrigin: Item.Right
-
-        Behavior on opacity {
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-        }
-        Behavior on scale {
-            NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-        }
+        implicitWidth: Math.min(root.pillMaxWidth, screencastRow.implicitWidth + 24)
 
         RowLayout {
             id: screencastRow
@@ -2540,37 +2690,25 @@ PanelWindow {
     // Informacyjna jak udostępnianie: bez hovera i bez regionu w masce.
     // Sterowanie jest na karcie zegara. Pokazuje TimerService.featured:
     // dzwoniący, potem najbliższy końca, potem zatrzymany w połowie.
-    Rectangle {
+    LiquidPill {
         id: timerPill
 
         readonly property var timer: TimerService.featured
-        readonly property bool shown: timer !== null && root.timerPillEnabled && root.timersEnabled
-                                      && !root.expanded && !root.restingWide
         readonly property int more: TimerService.activeTimers.length - 1
 
-        // Za pigułką udostępniania, gdy jest; inaczej przy samej wyspie.
-        x: (screencastPill.shown ? screencastPill.x : Math.round((root.width - root.collapsedWidth) / 2))
-           - root.pillGap - width
+        shown: timer !== null && root.timerPillEnabled && root.timersEnabled
+               && !root.expanded && !root.restingWide
+
+        // Za pigułką udostępniania, gdy jest (i z niej wypływa); inaczej
+        // przy samej wyspie.
+        z: -0.5
+        toRight: false
+        originEdge: screencastPill.shown ? screencastPill.x : Math.round((root.width - root.collapsedWidth) / 2)
+        gap: root.pillGap
+        originBusy: root.islandShrinking
         y: root.topMargin
         height: root.collapsedHeight
-        width: timerRow.implicitWidth + 24
-        radius: height / 2
-
-        color: "#0a0a0c"
-        border.width: 1
-        border.color: Qt.rgba(1, 1, 1, 0.08)
-
-        visible: shown
-        opacity: shown ? 1 : 0
-        scale: shown ? 1 : 0.9
-        transformOrigin: Item.Right
-
-        Behavior on opacity {
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-        }
-        Behavior on scale {
-            NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
-        }
+        implicitWidth: timerRow.implicitWidth + 24
 
         RowLayout {
             id: timerRow

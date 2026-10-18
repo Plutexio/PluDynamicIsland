@@ -31,6 +31,10 @@ Item {
     implicitWidth: 440
     implicitHeight: 150
 
+    // Karta jest teraz na wyspie — od tego startuje wejście kaskadowe
+    // bloków (CascadeShift).
+    property bool active: false
+
     signal openWifi()
     signal openBluetooth()
 
@@ -82,6 +86,7 @@ Item {
 
         // ---- lewa kolumna: przełączniki ----
         ColumnLayout {
+            transform: CascadeShift { step: 0; shown: card.active }
             Layout.preferredWidth: card.leftColumnWidth
             Layout.maximumWidth: card.leftColumnWidth
             Layout.fillHeight: true
@@ -256,6 +261,7 @@ Item {
 
         // ---- prawa kolumna: lista urządzeń ----
         ColumnLayout {
+            transform: CascadeShift { step: 1; shown: card.active }
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 4

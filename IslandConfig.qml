@@ -49,6 +49,7 @@ Singleton {
     readonly property var updates: values.updates
     readonly property var glances: values.glances
     readonly property var privacy: values.privacy
+    readonly property var effects: values.effects
 
     // ---- wartości wyprowadzone ----
 
