@@ -76,6 +76,17 @@ Powiadomienia i tak trafiają do historii, tylko nie widać dymka.
 - **Podczas udostępniania ekranu** — po lewej od zwiniętej pigułki stoi
   informacyjna pigułka z czerwoną kropką, nazwą aplikacji, która
   odbiera ekran, i timerem. Nie reaguje na kursor.
+- **Zerknięcia** — zwinięta pigułka rośnie na chwilę i pokazuje krótki
+  komunikat, bez rozwijania: głośność, jasność, Caps Lock, ładowarka, start
+  nagrywania z mikrofonu / kamery, koniec długiej komendy w terminalu,
+  dowolny skrypt przez IPC. Patrz [Zerknięcia](#zerknięcia).
+- **Gdy odlicza minutnik KClock** — po lewej od pigułki (za pigułką
+  udostępniania) stoi pigułka z odliczaniem; gdy zadzwoni, wyspa rozwija się
+  na karcie zegara z przyciskiem wyciszenia. Patrz
+  [Minutniki KClock](#minutniki-kclock).
+- **Gdy coś nagrywa** — kropka przy prawej krawędzi zwiniętej pigułki, jak
+  w iOS: pomarańczowa = mikrofon, zielona = kamera. Patrz
+  [Prywatność](#prywatność-mikrofon-kamera-ekran).
 
 ### Karty
 
@@ -167,7 +178,13 @@ wyspa by się zwijała, pigułka wracała pod kursor i tak w kółko.
 | `EqualizerService.qml` | Singleton: 10-pasmowy korektor z lsp-plugins wpięty w PipeWire (smart filter), gotowe i własne ustawienia. |
 | `EqualizerPanel.qml` | Panel korektora na całą wyspę: przełącznik, ustawienia, suwaki pasm z krzywą. |
 | `DiscordService.qml` | Singleton: stan rozmowy głosowej i komendy mute/deafen/rozłącz przez mostek. |
-| `ScreencastService.qml` | Singleton: wykrywanie udostępniania ekranu z `pw-dump -m` (PipeWire). |
+| `PrivacyService.qml` | Singleton: co nagrywa — ekran i mikrofon z `pw-dump -m` (PipeWire), kamera z `camera_watch.py`. |
+| `camera_watch.py` | Kto trzyma otwarte `/dev/video*` (inotify + `/proc`) — kamera używana z pominięciem PipeWire. |
+| `GlanceService.qml` | Singleton: kolejka zerknięć w zwiniętej pigułce (priorytety, czasy, IPC). |
+| `HudService.qml` + `hud_bridge.py` | Jasność ekranu (PowerDevil albo `/sys/class/backlight`) i Caps Lock (dioda klawiatury). |
+| `TimerService.qml` + `kclock_bridge.py` | Minutniki KClock (`kclockd` po D-Bus): stan, start/pauza, reset, wyciszenie. |
+| `ClockCard.qml` | Karta zegara: zegar z datą i lista minutników KClock. |
+| `integrations/island.zsh` | Hook zsh: zerknięcie po długiej komendzie. |
 | `ConnectivityCard.qml` | Karta łączności: przełączniki Wi‑Fi / Bluetooth, lista urządzeń Bluetooth. |
 | `NotificationService.qml` | Singleton: serwer powiadomień (Quickshell) + mostek transferów KDE, historia. |
 | `NotificationCard.qml` | Karta powiadomień: dymek na całej karcie / trwający transfer nad historią. |
@@ -247,7 +264,8 @@ Sekcje: `general` (monitor, język, odstęp od góry, animacje w pętli), `cards
 (ukrywanie kart), `expand` (auto-rozwinięcia: czy i na ile), `clock` (formaty),
 `spectrum` (słupki, fps, wygładzanie, kolor z okładki), `battery` (obwódka,
 kolory, puls, poszerzenie przy ładowarce), `volume`, `equalizer` (zapas na
-podbicia), `pills` (pigułki rozmowy i udostępniania), `notifications`,
+podbicia), `glances` (koniec komendy, IPC, jasność, Caps / Num Lock), `privacy` (kropka
+i zerknięcie przy nagrywaniu), `pills` (pigułki rozmowy i udostępniania), `notifications`,
 `bluetooth`, `wifi`, `updates` (sprawdzanie aktualizacji przy starcie).
 
 Poza plikiem zostały: sekrety Discorda (`discord.json`), przełącznik pauzy
@@ -346,13 +364,41 @@ python3 discord_bridge.py                          # wypisuje stan i logi JSON-e
 echo '{"cmd":"mute","value":true}' | python3 discord_bridge.py
 ```
 
-## Udostępnianie ekranu
+## Prywatność: mikrofon, kamera, ekran
 
-Na Waylandzie każde przechwytywanie ekranu (Discord, OBS, przeglądarka) to
-strumień wideo z kompozytora do aplikacji przez PipeWire. `ScreencastService`
-szuka węzła `Stream/Input/Video` w stanie `running`, którego odbiorcą nie jest
-pulpit (`ignoredApps`, domyślnie `plasmashell` — konsumuje `kwin_wayland` na
-potrzeby miniatur okien i istnieje zawsze, w stanie `suspended`).
+`PrivacyService` mówi, co w tej chwili nagrywa. Mikrofon i kamera dają kropkę
+w zwiniętej pigułce (pomarańczowa / zielona, kamera wygrywa) i na starcie
+zerknięcie z nazwą aplikacji; ekran ma swoją pigułkę po lewej.
+
+**Mikrofon** to aktywny *link* w PipeWire ze źródła (`Audio/Source*`) do
+strumienia aplikacji w stanie `running`. Po samej klasie strumienia się nie da:
+cava też jest `Stream/Input/Audio`, tylko podpiętym do `Audio/Sink`, czyli do
+monitora wyjścia (zmierzone — to samo dotyczy każdego wizualizatora).
+Pomijane są strumienie z `stream.monitor` (pomiar poziomu w mikserze) i
+aplikacje z `privacy.ignoredApps` — np. easyeffects trzyma mikrofon stale,
+żeby go filtrować, a wtedy kropka świeciłaby bez przerwy. Chromium (Brave,
+Discord) podpisuje strumień nazwą silnika (`WEBRTC VoiceEngine`), więc wtedy
+nazwa idzie z `application.process.binary`.
+
+**Kamera** z PipeWire jest prawie niewidoczna: Brave, Chrome i Discord
+(Electron) domyślnie otwierają `/dev/video*` wprost. `camera_watch.py` trzyma
+inotify na urządzeniach (`IN_OPEN` / `IN_CLOSE` działają też na plikach
+urządzeń — zmierzone) i dopiero po zdarzeniu przegląda `/proc/*/fd`, więc bez
+odpytywania. Jedno otwarcie pociąga kilka krótkich otwarć przez inne procesy
+(zmierzone: 4 pary), stąd 300 ms na uspokojenie. Gdy urządzenie trzyma sam
+`pipewire`, nazwa aplikacji idzie z linku `Video/Source (v4l2) → strumień`.
+Kamera przez PipeWire nie jest już też brana za udostępnianie ekranu.
+
+**Ekran**: na Waylandzie każde przechwytywanie (Discord, OBS, przeglądarka) to
+strumień wideo z kompozytora do aplikacji przez PipeWire. Szukamy węzła
+`Stream/Input/Video` w stanie `running`, który nie idzie z kamery i którego
+odbiorcą nie jest pulpit (`ignoredScreenApps`, domyślnie `plasmashell` —
+konsumuje `kwin_wayland` na potrzeby miniatur okien i istnieje zawsze,
+w stanie `suspended`).
+
+Przez 3 s od startu serwis nie zgłasza początku nagrywania: instancja
+przeładowuje się na żywo i trwająca rozmowa dawałaby zerknięcie przy każdej
+edycji pliku.
 
 Zamiast odpytywać `pw-dump` co kilka sekund, serwis trzyma `pw-dump -m`
 (tryb monitora): pierwszy zrzut to wszystkie obiekty, potem przychodzi tablica
@@ -368,6 +414,50 @@ pw-dump | grep -B2 -A30 '"Stream/Input/Video"' | grep -E 'application.name|node.
 ```
 
 Timer udostępniania, jak timer rozmowy, liczy `SystemClock`, nie `Timer`.
+
+## Minutniki KClock
+
+Wyspa nie ma własnych minutników — pokazuje i steruje tymi z **KClock**
+(`kclockd`), więc minutnik nastawiony w aplikacji odlicza na wyspie, a
+zatrzymany na wyspie stoi też w aplikacji. `kclock_bridge.py` rozmawia
+z `kclockd` po D-Bus (Quickshell nie ma klienta D-Bus w QML).
+
+- **Karta zegara** (`ClockCard.qml`) przy minutnikach rośnie do 440 px i
+  pokazuje je obok zegara: czas, nazwa (albo długość — KClock nazywa każdy
+  nowy minutnik „Timer”), pasek postępu, start/pauza, reset, a przy
+  dzwoniącym — wyciszenie. Więcej niż trzy = lista przewijana kółkiem.
+- **Nowy minutnik**: plusik w lewym górnym rogu karty otwiera wybierak —
+  czas kółkiem (±1 min, z Shiftem ±5; obrót sumowany do pełnego ząbka jak
+  przy głośności), strzałkami albo presetem 1/5/10/25 min, i pomarańczowy
+  start. Minutnik powstaje w KClock (`addTimer`) i od razu odlicza; zostaje
+  na liście jak każdy inny. Klik w zegar otwiera KClock — tam się minutniki
+  nazywa i usuwa.
+- **Pigułka** po lewej pokazuje najważniejszy aktywny: dzwoniący, potem
+  najbliższy końca, potem zatrzymany w połowie; „+N”, gdy jest ich więcej.
+- **Dzwonienie** rozwija wyspę na karcie zegara (`expand.onTimer`).
+
+Pułapki `kclockd` (zmierzone na kclock 26.08):
+
+- Właściwości minutnika są oznaczone *emits-change*, ale `kclockd` nie wysyła
+  `PropertiesChanged`, tylko sygnały w stylu Qt (`runningChanged`,
+  `timeCompletedChanged`…) — mostek nasłuchujący `PropertiesChanged` nie
+  widział żadnej zmiany.
+- `kclockd` **sam się zamyka**, gdy nic nie odlicza, i wstaje z aktywacji
+  D-Bus przy pierwszym wywołaniu. Zniknięcie nazwy to zwykły stan: lista
+  zostaje, a przycisk na wyspie sam go obudzi.
+- `timers()` zwraca id w formie ścieżki, `removeTimer` chce `uuid()`
+  w klamrach (z id ścieżki nic nie robi).
+- Wywołanie trafione w chwilę, gdy `kclockd` się zamyka, dostaje
+  „not activatable” — mostek ponawia komendę raz po 1,5 s.
+- Pozostały czas: `timeCompleted − teraz` przy odliczaniu, `length −
+  elapsed()` na pauzie (`timeCompleted` przelicza się przy każdym odczycie).
+- Odliczający minutnik wysyła do demona powiadomień stałe powiadomienie
+  „Timer 1:59” **co sekundę**, a na koniec „Timer complete”. Wyspa jest tu
+  demonem, więc każdy start rozwijał kartę powiadomień i dokładał wpis do
+  historii. `NotificationService` połyka oba (po `desktop-entry` =
+  `org.kde.kclockd` i `x-kde-eventId` = `timer` / `timerFinished`), dopóki
+  wyspa sama pokazuje minutniki — wyłączone `clock.timers` albo padnięty
+  mostek przywraca je.
 
 ## Powiadomienia i transfery plików
 
@@ -892,18 +982,79 @@ Skala to 0–1 liniowo, ta sama co w `wpctl get-volume` (zmierzone: 0,75 po obu
 stronach). Głośność dotyczy **wyjścia**, nie odtwarzacza — działa też wtedy,
 gdy nic nie gra (pigułka jest wtedy na karcie „Nic nie gra").
 
+### Zerknięcia
+
+Krótki komunikat w zwiniętej pigułce: pigułka rośnie (44 px wysokości,
+szerokość z treści, 168–380 px), pigułki rozmowy i udostępniania na ten czas
+znikają, a wyspa się **nie** rozwija. Wszystkie idą przez jedną kolejkę
+w `GlanceService`:
+
+| Źródło | Priorytet | Czeka w kolejce | Czas |
+| --- | --- | --- | --- |
+| głośność, jasność, Caps / Num Lock | 4 | nie | `volume.noticeMs`, `glances.hudMs` |
+| ładowarka | 3 | 3 s | `battery.chargerNoticeMs` |
+| mikrofon / kamera | 2 | 5 s | `privacy.glanceMs` |
+| koniec komendy, IPC | 1 | 60 s | `glances.commandMs`, `glances.ipcMs` |
+
+Wyższy priorytet wypiera bieżące zerknięcie, a to wraca po nim z **resztą**
+swojego czasu (z pełnym komenda wyparta dwa razy pokazała się trzy razy po 4 s
+— zmierzone); jeśli zostało mniej niż 1,2 s, nie wraca wcale. Ten sam klucz
+podmienia treść na miejscu (kolejne naciśnięcia klawisza głośności to jedno
+zerknięcie). Między dwoma zerknięciami z kolejki jest 380 ms przerwy, żeby było
+widać, że to dwa komunikaty. Rozwinięcie wyspy zdejmuje bieżące — skoro
+sięgasz po kartę, to jej chcesz — a kolejka czeka do zwinięcia.
+
+**Z dowolnego skryptu** (ikona z `IslandIcon.qml`, nieznana → dzwonek; puste
+pole znika):
+
+```sh
+qs -p ~/PluProjects/PluDynamicIslandQuickshell ipc call island glance check "Kopia gotowa" "12 GB"
+```
+
+**Koniec długiej komendy** — w `~/.zshrc`:
+
+```sh
+source ~/PluProjects/PluDynamicIslandQuickshell/integrations/island.zsh
+```
+
+Po komendzie dłuższej niż `ISLAND_CMD_MIN` (10 s) wyspa pokazuje ✓ albo ✗
+z kodem wyjścia, komendę i czas. Pomija Ctrl+C / Ctrl+Z i programy
+interaktywne (`ISLAND_CMD_IGNORE`: edytory, `less`, `ssh`, `htop`…) —
+porównywane z pierwszym słowem po `sudo` / `env` / `VAR=…`. Oba ustawienia
+nadpisuje się przed `source`. `qs ipc` idzie w tle i odpięte, więc prompt na
+nie nie czeka.
+
+### Jasność i Caps Lock
+
+`hud_bridge.py`. **Jasność** na KDE idzie z PowerDevil
+(`org.kde.ScreenBrightness`, sygnał `BrightnessChanged`) — obejmuje też
+monitory zewnętrzne przez DDC, a na desktopie `/sys/class/backlight` jest
+pusty. Jeden krok jasności daje sygnał osobno dla każdego ekranu (zmierzone:
+dwa), co zerknięcie łączy kluczem. Przyciemnianie przy bezczynności idzie w
+Plasmie 6.7 osobnym mnożnikiem (`setDimmingRatio`), nie przez jasność, więc
+nie powinno dawać zerknięcia. Bez PowerDevil (Hyprland na laptopie) mostek
+obserwuje `/sys/class/backlight/*` przez inotify.
+
+**Caps Lock** to dioda klawiatury w `/sys/class/leds/*::capslock` — klient
+Waylanda bez fokusu klawiatury nie dostaje stanu modyfikatorów, a
+`/dev/input` wymaga grupy `input`. Dioda nie zgłasza zmian, więc mostek
+odpytuje ją co 150 ms (odczyt pliku sysfs, bez procesów). Póki Caps Lock jest
+włączony, w zwiniętej pigułce stoi mała ikonka (`glances.capsIndicator`).
+Klawiatura bez diody Caps Lock = brak zerknięcia (mostek mówi to w logu).
+
+**Num Lock** tą samą drogą (`*::numlock`), tylko zerknięcie — bez stałej
+ikonki, bo Num Lock jest zwykle włączony i wisiałaby w pigułce cały czas.
+
 ### Pasek głośności w zwiniętej pigułce
 
 Zmiana głośności **spoza wyspy** — klawiszami multimedialnymi, z pavucontrol,
-czymkolwiek — zamienia na `volumeNoticeDuration` (1,4 s) treść **zwiniętej**
-pigułki na pasek: ikona, poziom i procent. Wyspa się przy tym nie rozwija ani
-nie zmienia rozmiaru (zmierzone: 168 × 34 przed, w trakcie i po), więc nic nie
-skacze na ekranie — to ma być zerknięcie, a nie wyskakujące okno pod kursorem.
+czymkolwiek — to [zerknięcie](#zerknięcia) z paskiem na `volumeNoticeDuration`
+(1,4 s): ikona, poziom i procent, pigułka 280 × 44 (zmierzone sondą). Ma
+najwyższy priorytet, bo to odpowiedź na własny ruch: wypiera każde inne
+zerknięcie, które wraca po nim.
 
 Pasek NIE pokazuje się, gdy wyspa jest rozwinięta: widać wtedy pigułkę wyjścia
 z tą samą informacją, a przykrycie karty paskiem byłoby krokiem wstecz.
-Najechanie kursorem w trakcie pokazywania paska od razu go chowa — skoro
-sięgasz po kartę, to jej chcesz.
 
 Pierwszy odczyt po starcie i po przełączeniu wyjścia **nie** liczy się jako
 zmiana: wartość skacze wtedy z zera na rzeczywistą albo na głośność innego

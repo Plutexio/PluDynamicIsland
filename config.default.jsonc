@@ -66,6 +66,8 @@
         "transferMs": 3000,
         "onAirPods": true,          // połączenie AirPodsów -> karta AirPodsów
         "airPodsMs": 3500,
+        "onTimer": true,            // minutnik KClock dzwoni -> karta zegara
+        "timerMs": 8000,
 
         // Po przeskoku karty kółkiem kolejne zdarzenia są ignorowane przez
         // tyle ms — jedno machnięcie touchpadem nie przeskoczy dwóch kart.
@@ -78,7 +80,11 @@
     "clock": {
         "pillFormat": "HH:mm",           // zwinięta pigułka (szerokość pigułki jest stała!)
         "cardFormat": "HH:mm:ss",        // karta zegara
-        "dateFormat": "dddd, d MMMM"     // data pod zegarem na karcie
+        "dateFormat": "dddd, d MMMM",    // data pod zegarem na karcie
+
+        // Minutniki z KClock obok zegara (start, pauza, reset, wyciszenie).
+        // Dodaje się je w KClock — klik w zegar otwiera aplikację.
+        "timers": true
     },
 
     // ---- widmo dźwięku (cava) ----------------------------------------
@@ -138,6 +144,42 @@
         "step": 0.03
     },
 
+    // ---- zerknięcia ---------------------------------------------------
+    // Krótkie komunikaty w zwiniętej pigułce. Głośność i ładowarka mają
+    // swoje przełączniki wyżej, tu reszta.
+    "glances": {
+        // Koniec długiej komendy w terminalu. Wymaga hooka w powłoce:
+        //   source ~/PluProjects/PluDynamicIslandQuickshell/integrations/island.zsh
+        // (próg czasu i lista pomijanych komend są w tym pliku).
+        "commandDone": true,
+        "commandMs": 4000,
+
+        // Zerknięcie ze skryptu:  qs -p <projekt> ipc call island glance <ikona> <tytuł> <wartość>
+        "ipcMs": 3000,
+
+        // Jasność ekranu (klawisze, suwak w Plasmie), Caps Lock i Num Lock, na tyle ms.
+        "brightness": true,
+        "capsLock": true,
+        "numLock": true,
+        "hudMs": 1400,
+        // Stała ikonka w zwiniętej pigułce, póki Caps Lock jest włączony.
+        "capsIndicator": true
+    },
+
+    // ---- prywatność ---------------------------------------------------
+    "privacy": {
+        // Kropka w zwiniętej pigułce: pomarańczowa = mikrofon, zielona = kamera.
+        "dot": true,
+
+        // Na starcie nagrywania zerknięcie z nazwą aplikacji, na tyle ms.
+        "glance": true,
+        "glanceMs": 2500,
+
+        // Aplikacje, które nie zapalają kropki mikrofonu — np. "easyeffects",
+        // który trzyma mikrofon stale. Nazwa jak w zerknięciu.
+        "ignoredApps": []
+    },
+
     // ---- korektor (equalizer) ----------------------------------------
     // Pasma i własne ustawienia zapisuje sama wyspa, w equalizer.json obok.
     "equalizer": {
@@ -151,6 +193,7 @@
     "pills": {
         "voice": true,          // rozmowa na Discordzie: kanał + czas
         "screencast": true,     // udostępnianie ekranu: aplikacja + czas
+        "timer": true,          // minutnik KClock: odliczanie
         "gap": 8,               // odstęp od wyspy, px
         "maxWidth": 200         // dłuższe nazwy są obcinane, px
     },

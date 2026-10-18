@@ -444,21 +444,115 @@ kanał. Na stdout pełne migawki `type:"state"` tylko przy zmianie, na stdin
 - Test zmiany trybu **przełącza słuchawki na uszach użytkownika** — uprzedź go
   i przywróć tryb po pomiarze.
 
-### ScreencastService
+### PrivacyService (ekran, mikrofon, kamera)
 
-Singleton nad `pw-dump -m` (tryb monitora PipeWire). Udostępnianie ekranu = węzeł
-`Stream/Input/Video` w stanie `running`, którego odbiorca nie jest na `ignoredApps`
-(`plasmashell` konsumuje `kwin_wayland` na miniatury okien i istnieje stale jako
-`suspended` — bez filtra stanu i nazwy byłby fałszywy alarm).
+Dawny `ScreencastService`. Singleton nad `pw-dump -m` (tryb monitora PipeWire)
+i `camera_watch.py`. Wystawia `screenActive/screenApp/screenElapsedSeconds`
+(pigułka udostępniania), `micApps`/`micActive`, `cameraApps`/`cameraActive`
+(kropka prywatności) i sygnał `started(kind, apps)` (zerknięcie).
 
-- Aktualizacja węzła z `pw-dump -m` to pełny obiekt (stan + props), nie delta.
-  Usunięcie to `{"id": N, "info": null}`. Tablice wieloliniowe, granica = samotny `]`.
+- **Mikrofon to link, nie węzeł.** Aktywny link z `Audio/Source*` do
+  `Stream/Input/Audio` w stanie `running`. Cava też jest `Stream/Input/Audio`,
+  ale podpięta do `Audio/Sink` (monitor wyjścia) — po samej klasie strumienia
+  kropka świeciłaby przy każdej muzyce (zmierzone `pw-record` vs cava).
+  Pomijane: `stream.monitor` (miernik poziomu) i `privacy.ignoredApps`.
+- **Kamery z PipeWire prawie nie widać** — Brave/Chrome/Discord otwierają
+  `/dev/video*` wprost. `camera_watch.py`: inotify `IN_OPEN`/`IN_CLOSE` na
+  urządzeniach (działa na plikach urządzeń, zmierzone), `/proc/*/fd` dopiero po
+  zdarzeniu, 300 ms uspokojenia (jedno `open()` = 4 pary zdarzeń). Holder
+  `pipewire` dostaje nazwę z linku `Video/Source` (v4l2) → strumień.
+- Udostępnianie ekranu = `Stream/Input/Video` `running`, nie z kamery, odbiorca
+  spoza `ignoredScreenApps` (`plasmashell` konsumuje `kwin_wayland` na
+  miniatury okien i istnieje stale jako `suspended`).
+- `started` milczy przez `startupGraceMs` (3 s) — przeładowanie na żywo
+  w trakcie rozmowy dawałoby zerknięcie przy każdej edycji.
+- Aktualizacja obiektu z `pw-dump -m` to pełny obiekt (stan + props), nie delta.
+  Usunięcie to `{"id": N, "info": null}` — dotyczy węzłów **i linków**.
+  Tablice wieloliniowe, granica = samotny `]`.
+- Test mikrofonu: `timeout 6 pw-record --target <źródło> /dev/null` (nic nie
+  zmienia, ale zapala kropkę także w instancji użytkownika). Kamery bez
+  zapalania diody: `open('/dev/video0','rb')` w Pythonie — samo otwarcie, bez
+  streamu, wystarcza `camera_watch.py`.
 - Pigułka udostępniania jest **czysto informacyjna**: bez podkładki hovera i bez
   regionu w masce. Nie ma karty, którą mogłaby otwierać.
 - Nie da się tu zasymulować udostępniania bez portalu: `gst-plugin-pipewire` nie
   jest zainstalowany, `ffmpeg` nie ma wejścia pipewire. Logikę sprawdza się sondą
-  wołającą `ScreencastService.applyUpdate([...])` z syntetycznymi węzłami; realny
-  test robi użytkownik (serwis loguje `[screencast] start udostępniania: <app>`).
+  wołającą `PrivacyService.applyUpdate([...])` z syntetycznymi węzłami; realny
+  test robi użytkownik (serwis loguje `[privacy] start udostępniania: <app>`).
+
+### GlanceService (zerknięcia)
+
+Jedna kolejka dla wszystkiego, co chce na chwilę zająć **zwiniętą** pigułkę:
+głośność, jasność, Caps / Num Lock (prio 4), ładowarka (3), mikrofon/kamera (2), koniec komendy i IPC
+(1). Wcześniej każde zerknięcie miało własną flagę, timer i piętro w
+`restingWidth`, a pigułki obok musiały znać każde z osobna.
+
+- Nowe zerknięcie = jedno `GlanceService.show({...})` w miejscu źródła.
+  **Nie** dodawaj własnej flagi do `DynamicIsland` — rozmiar (`glanceWidth`,
+  z `glanceRow.implicitWidth`), chowanie pigułek (`restingWide`) i wygaszanie
+  zegara idą już z `glanceShown`.
+- Ten sam `key` = podmiana na miejscu; brak `key` = każde osobno (dwa terminale
+  kończące naraz). `waitMs: 0` = teraz albo wcale.
+- Wyparte wraca z **resztą** czasu (`shownAt`), poniżej `minRemainingMs` wcale —
+  z pełnym czasem komenda wyparta dwa razy była na ekranie trzy razy.
+- `suppressed` ustawia wyspa (`Binding`: rozwinięta albo schowana): zdejmuje
+  bieżące, kolejka czeka.
+- `glanceView` trzyma ostatnie zerknięcie do rysowania — po `current = null`
+  treść musi przetrwać wygaszanie.
+- Treść ma szerokość DOCELOWĄ i `x` od docelowej, nie `centerIn`: kropka
+  prywatności zabiera prawy margines (`glanceDotSpace`), bez tego dotykała
+  wartości („mikrofon●", zmierzone zrzutem).
+- IPC (`shell.qml`): `glance icon title value`, `commandDone cmd code secs`
+  (woła `integrations/island.zsh`, który sam filtruje próg, Ctrl+C i programy
+  interaktywne — żeby nie odpalać `qs` po każdym `ls`).
+
+### TimerService + ClockCard (minutniki KClock)
+
+Wyspa nie ma własnych minutników: `kclock_bridge.py` (python-dbus) czyta
+i steruje `kclockd`, `TimerService` liczy pozostały czas, `ClockCard.qml`
+(karta zegara, `hovering` w `controlsHovered`) i `timerPill` pokazują.
+
+- `kclockd` wysyła **sygnały Qt** (`runningChanged`…), nie `PropertiesChanged`,
+  mimo *emits-change* w introspekcji.
+- `kclockd` **sam się zamyka**, gdy nic nie odlicza (`/Utility canExit`),
+  i wstaje z aktywacji. Świeżo aktywowany ma nazwę przed `/Timers`
+  (`UnknownObject`) — mostek ponawia. Lista po zniknięciu nazwy zostaje.
+- `timers()` = id ścieżki, `removeTimer` = `uuid()` w klamrach.
+  `addTimer(i length, s label, b looping, s commandTimeout, b running)`.
+- Komenda trafiona w zamykanie kclockd → `ServiceUnknown` „not activatable”;
+  mostek ponawia raz. Proxy tworzone przy każdym wywołaniu
+  (`introspect=False`): stare trzyma nazwę unikalną martwego procesu,
+  a introspekcja świeżo aktywowanego sypała `UnknownObject` na stderr.
+- Usunięcie: sygnały minutnika przychodzą, gdy obiekt jeszcze istnieje
+  (odczyt widzi go dalej) — `timerRemoved` zdejmuje go z listy od razu.
+- Wybierak nowego minutnika (`adding`) zamyka zejście z karty (`active`
+  z wyspy). Plusik w lewym górnym rogu, bo prawy zajmują przyciski listy;
+  zegar na szerokiej karcie ma 26 px, przy 30 zaczynał się pod plusikiem.
+- Pozostały czas: `endsAt` (z `timeCompleted`) przy odliczaniu,
+  `length − elapsed` na pauzie. `SystemClock` tyka tylko, gdy coś odlicza.
+- Model karty to tablica z mostka podmieniana przy każdej zmianie, więc
+  delegaty giną po każdym kliknięciu — hover liczony licznikiem z
+  `Component.onDestruction`, jak w karcie łączności.
+- `left` w delegacie **nie wolno** — to FINAL właściwość `Item` (linia
+  kotwicy); błąd ładowania wywalił całą konfigurację.
+- Kropki stron karuzeli siedzą 6 px nad dołem wyspy — lista ma 14 px
+  marginesu na dole, inaczej nachodziły na ostatni wiersz.
+- **Testy zmieniają KClock użytkownika.** Minutnik testowy dzwoni na jego
+  głośnikach. Do wyglądu: syntetyczna `priv.timers` w KOPII `TimerService`
+  z wyłączonym `proc`. Powiadomienia: kopia na `dbus-run-session` +
+  `notify-send -h string:desktop-entry:org.kde.kclockd -h
+  string:x-kde-eventId:timer` (z wyłączonym mostkiem — inaczej aktywuje drugi
+  `kclockd` na prywatnej magistrali, z tym samym plikiem konfiguracji).
+
+### HudService (jasność, Caps Lock)
+
+`hud_bridge.py`: jasność z `org.kde.ScreenBrightness` (PowerDevil, też DDC;
+sygnał osobno per ekran) albo inotify na `/sys/class/backlight/*` poza KDE;
+Caps / Num Lock z `/sys/class/leds/*::capslock` / `*::numlock`, odpytywane co 150 ms (dioda nie
+zgłasza zmian, a `/dev/input` wymaga grupy `input`). Pierwszy stan Caps
+Locka ma `initial: true` i nie daje zerknięcia — tylko ikonkę w pigułce.
+Test jasności: `AdjustBrightnessStepWithContext uus 2 1 "ctx"` i z powrotem
+`3 1` (zmienia monitor użytkownika na chwilę).
 
 ### NotificationService (powiadomienia + transfery plików)
 
@@ -496,6 +590,9 @@ Pułapki:
   `image://icon//usr/…/x.png` — dostawca `image://icon` nie ładuje plików.
   `resolveIcon` odwija to do `file://`. Nazwa z motywu (`image://icon/dialog-information`)
   ładuje się normalnie.
+- Powiadomienia minutników KClock (`timer` co sekundę, `timerFinished`)
+  są połykane, póki `TimerService.shownOnIsland` — śledzone, ale bez wpisu
+  i bez wyskakiwania (odrzucone kclockd dostałby jako zamknięte).
 - **Nie wygaszaj powiadomień** (`expire()`), dopóki wpis jest w historii.
   Zamknięcie zabiera powiadomieniu akcje, a akcja `default` to jedyne, co
   przenosi aplikację do właściwej rozmowy — bez niej klik otwiera aplikację
@@ -647,7 +744,7 @@ Pigułka to `IslandClip`, nie `Rectangle`: `clip: true` na `Rectangle`
 z `radius` przycina PROSTOKĄTNIE i wypełnienie wystawałoby poza zaokrąglone rogi.
 
 `AudioService.volumeNudged()` zgłasza zmianę głośności **spoza wyspy**, a wyspa
-zamienia po nim na chwilę treść zwiniętej pigułki na pasek (`volumeNotice`).
+pokazuje po nim zerknięcie z paskiem (GlanceService, `key: "volume"`).
 Dwie pułapki:
 
 - **Pierwszy odczyt nie jest zmianą.** Po starcie głośność skacze z zera na
@@ -656,11 +753,9 @@ Dwie pułapki:
   tylko go ustawia. Bez tego wyspa mrugałaby paskiem przy każdym starcie
   i przy każdej zmianie sinka.
 - **Pasek nie pokazuje się przy rozwiniętej wyspie** — widać wtedy pigułkę
-  wyjścia z tą samą informacją. `onExpandedChanged` gasi też pasek w trakcie,
-  inaczej wracałby po zjechaniu kursorem, na resztę czasu.
+  wyjścia z tą samą informacją (`waitMs: 0` + `suppressed`).
 
-Pigułka zostaje przy `collapsedWidth × collapsedHeight` (zmierzone: 168 × 34
-przed, w trakcie i po) — zmiana rozmiaru zrobiłaby z zerknięcia skaczące okno.
+Pigułka ma wtedy 280 × 44 (`glanceBarWidth` 168 + reszta rzędu).
 
 Mikrofon systemowy (przełącznik `micSwitch` na karcie Discorda) wycisza **wszystkie**
 źródła `AudioSource`, nie tylko domyślne — aplikacja może słuchać innego wejścia
@@ -682,10 +777,8 @@ Stan zasilania pokazuje kolor (`batteryColor` / `batteryChargingColor` /
 alfą koloru — `opacity` Shape jest zajęte przez chowanie przy rozwinięciu —
 ale **tylko przy `IslandConfig.loopAnimations`** (niżej).
 
-Podłączenie/odłączenie ładowarki (`UPower.onBattery`) poszerza zwiniętą pigułkę
-do `powerNoticeWidth` (`restingWidth`, wliczone w `reachWidth`) na
-`powerNoticeDuration`. `collapsedWidth` zostaje stałe, a pigułki rozmowy
-i udostępniania na ten czas znikają. Zmierzone: przy starcie `onBattery`
+Podłączenie/odłączenie ładowarki (`UPower.onBattery`) to zerknięcie
+(GlanceService, `minWidth: powerNoticeWidth`) na `powerNoticeDuration`. Zmierzone: przy starcie `onBattery`
 zmienia się **przed** `displayDevice.ready`, stąd `knownPowerSource = -1`
 i ignorowanie zmian sprzed `available` — inaczej każdy start na baterii
 udawałby odłączenie.

@@ -330,8 +330,22 @@ Singleton {
     // Serwer powiadomień
     // ---------------------------------------------------------------
 
+    // Minutniki KClock wyspa pokazuje sama (karta zegara, pigułka), a kclockd
+    // wysyła do nich powiadomienia: stałe "Timer 1:59" podmieniane CO SEKUNDĘ
+    // przez całe odliczanie i "Timer complete" na koniec (zmierzone
+    // dbus-monitorem). Pierwsze rozwijało wyspę na karcie powiadomień przy
+    // każdym starcie minutnika, a historia zbierała po wpisie na każdy.
+    // Śledzone dalej (tracked), tylko bez wpisu i bez wyskakiwania: kclockd
+    // zamyka je sam przy resecie / wyciszeniu, a odrzucone dostałby jako
+    // zamknięte przez użytkownika.
+    function isKClockTimer(n) {
+        const ev = (n.hints || {})["x-kde-eventId"];
+        return n.desktopEntry === "org.kde.kclockd" && (ev === "timer" || ev === "timerFinished");
+    }
+
     function handleNotification(n) {
         n.tracked = true;
+        if (TimerService.shownOnIsland && isKClockTimer(n)) return;
 
         const entry = {
             kind: "notification",

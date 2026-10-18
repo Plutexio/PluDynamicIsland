@@ -38,6 +38,49 @@ ShellRoot {
         // Pasek PluDE: klik w ikonę Wi-Fi / Bluetootha. "wifi" | "bluetooth";
         // drugie wywołanie z tą samą nakładką ją zamyka.
         function toggleOverlay(mode: string): void { DockLink.overlayRequested(mode); }
+
+        // Zerknięcie ze skryptu (GlanceService): ikona z IslandIcon (nieznana
+        // → dzwonek), tytuł po lewej, wartość po prawej; puste pole znika.
+        //   qs -p <projekt> ipc call island glance check "Kopia gotowa" "12 GB"
+        function glance(icon: string, title: string, value: string): void {
+            GlanceService.show({
+                icon: icon,
+                title: title,
+                value: value,
+                valueColor: "#9a9aa2",
+                durationMs: IslandConfig.glances.ipcMs,
+                priority: 1,
+                waitMs: 60000
+            });
+        }
+
+        // Koniec długiej komendy — woła go integrations/island.zsh. Każda
+        // osobno (bez key): dwa terminale kończące naraz to dwa zerknięcia,
+        // a nie jedno nadpisane drugim.
+        function commandDone(command: string, exitCode: int, seconds: int): void {
+            if (!IslandConfig.glances.commandDone) return;
+            const ok = exitCode === 0;
+            GlanceService.show({
+                icon: ok ? "check" : "close",
+                iconColor: ok ? "#30d158" : "#ff453a",
+                title: command.split("\n")[0],
+                value: (ok ? "" : "kod " + exitCode + " · ") + root.formatDuration(seconds),
+                valueColor: "#9a9aa2",
+                durationMs: IslandConfig.glances.commandMs,
+                priority: 1,
+                waitMs: 60000
+            });
+        }
+    }
+
+    // 45 s | 2:14 | 1:02:03
+    function formatDuration(seconds) {
+        const s = Math.max(0, seconds);
+        if (s < 60) return s + " s";
+        const pad = n => (n < 10 ? "0" : "") + n;
+        const h = Math.floor(s / 3600);
+        const m = Math.floor(s / 60) % 60;
+        return (h > 0 ? h + ":" + pad(m) : m) + ":" + pad(s % 60);
     }
 
     // Stan dla docka PluDE — patrz DockLink.qml. Tylko ukrycie skrótem:

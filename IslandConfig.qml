@@ -47,6 +47,8 @@ Singleton {
     readonly property var bluetooth: values.bluetooth
     readonly property var wifi: values.wifi
     readonly property var updates: values.updates
+    readonly property var glances: values.glances
+    readonly property var privacy: values.privacy
 
     // ---- wartości wyprowadzone ----
 
@@ -83,7 +85,11 @@ Singleton {
         "volume.step": [0.005, 0.25],
         "notifications.historyLimit": [1, 500],
         "pills.maxWidth": [60, 600],
-        "general.topMargin": [0, 200]
+        "general.topMargin": [0, 200],
+        "glances.commandMs": [500, 60000],
+        "glances.ipcMs": [500, 60000],
+        "privacy.glanceMs": [500, 60000],
+        "glances.hudMs": [300, 10000]
     })
     readonly property var choices: ({
         "general.loopAnimations": ["auto", "on", "off"],

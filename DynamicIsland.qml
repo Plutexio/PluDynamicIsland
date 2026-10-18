@@ -75,6 +75,34 @@ PanelWindow {
     readonly property int powerNoticeDuration: IslandConfig.battery.chargerNoticeMs
     property int powerNoticeWidth: 232
 
+    // Zerknięcia (GlanceService): wysokość pigułki, margines treści po bokach,
+    // szerokość paska postępu i górna granica szerokości (dłuższy tytuł jest
+    // obcinany). Wysokość parzysta, jak collapsedHeight — patrz "Pułapki
+    // geometryczne". Pasek 168 daje pigułkę głośności 280 px.
+    property int glanceHeight: 44
+    property int glancePadding: 18
+    property int glanceBarWidth: 168
+    property int glanceMaxWidth: 380
+    // Kropka prywatności (mikrofon / kamera) przy prawej krawędzi pigułki.
+    readonly property bool privacyDotEnabled: IslandConfig.privacy.dot
+    // Kropka zabiera prawy margines treści: bez tego dotykała wartości
+    // zerknięcia ("mikrofon●", zmierzone zrzutem). Parzysta, jak reszta.
+    readonly property bool privacyDotShown: privacyDotEnabled && !expanded
+                                            && (PrivacyService.micActive || PrivacyService.cameraActive)
+    readonly property int glanceDotSpace: privacyDotShown ? 10 : 0
+    readonly property bool privacyGlanceEnabled: IslandConfig.privacy.glance
+    readonly property int privacyGlanceDuration: IslandConfig.privacy.glanceMs
+    // Jasność i Caps Lock: zerknięcia i stała ikonka w pigułce przy Caps Locku.
+    readonly property bool brightnessGlanceEnabled: IslandConfig.glances.brightness
+    readonly property bool capsGlanceEnabled: IslandConfig.glances.capsLock
+    readonly property bool numGlanceEnabled: IslandConfig.glances.numLock
+    readonly property bool capsIndicatorEnabled: IslandConfig.glances.capsIndicator
+    readonly property int hudGlanceDuration: IslandConfig.glances.hudMs
+    // Minutniki KClock na karcie zegara; dzwoniący rozwija wyspę na tyle ms.
+    readonly property bool timersEnabled: IslandConfig.clock.timers
+    readonly property bool expandOnTimer: IslandConfig.expand.onTimer
+    readonly property int timerNoticeDuration: IslandConfig.expand.timerMs
+
     // Dogładzanie słupków widma po stronie QML. Przy 60 fps klatka przychodzi
     // co ~17 ms, więc 28 ms to niecałe dwie klatki — słupek zdąży prawie
     // dobiec do celu, zanim przyjdzie następny. Poprzednie 90 ms oznaczało,
@@ -109,6 +137,7 @@ PanelWindow {
 
     readonly property bool voicePillEnabled: IslandConfig.pills.voice
     readonly property bool screencastPillEnabled: IslandConfig.pills.screencast
+    readonly property bool timerPillEnabled: IslandConfig.pills.timer
     readonly property int pillGap: IslandConfig.pills.gap             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
     readonly property int pillMaxWidth: IslandConfig.pills.maxWidth   // dłuższe nazwy kanałów / aplikacji są obcinane
 
@@ -209,7 +238,7 @@ PanelWindow {
     // Bierzemy większy z rozmiarów: przy rozwijaniu od razu docelowy,
     // przy zwijaniu maska kurczy się razem z wyspą.
     readonly property int reachWidth: Math.ceil(Math.max(island.width, expanded ? expandedWidth : restingWidth))
-    readonly property int reachHeight: Math.ceil(Math.max(island.height, expanded ? expandedHeight : collapsedHeight))
+    readonly property int reachHeight: Math.ceil(Math.max(island.height, expanded ? expandedHeight : restingHeight))
 
     // Myszkę łapie wyłącznie sam kształt wyspy (plus pigułka rozmowy, gdy jest).
     // Bez tego niewidoczny pasek na całej szerokości ekranu zjadałby kliknięcia
@@ -250,7 +279,7 @@ PanelWindow {
         || outputChip.hovering || outputChipIdle.hovering || micSwitch.hovering
         || connectivity.hovering || notifications.hovering || airpods.hovering
         || (overlay.item ? overlay.item.hovering : false)
-        || eqPanel.hovering || updatePanel.hovering
+        || eqPanel.hovering || updatePanel.hovering || clockCard.hovering
     readonly property bool pointerInside: areaHover.hovered || controlsHovered || pillHover.hovered
 
     onPointerInsideChanged: {
@@ -273,38 +302,64 @@ PanelWindow {
     property bool pinned: false
     property bool notice: false   // krótkie auto-rozwinięcie, "powiadomienie"
 
-    // ---- pasek głośności w zwiniętej pigułce ----
-    // Zmiana głośności spoza wyspy (klawisze multimedialne, pavucontrol)
-    // zamienia na chwilę treść ZWINIĘTEJ pigułki na pasek — jak HUD głośności
-    // w iOS. Wyspa się przy tym NIE rozwija: to ma być zerknięcie, a nie
-    // wyskakujące okno pod kursorem.
-    property bool volumeNotice: false
+    // ---- zerknięcia w zwiniętej pigułce ----
+    // Kolejka, priorytety i czasy są w GlanceService; tu tylko źródła, które
+    // należą do wyspy, i rysowanie. Rozwinięta albo schowana wyspa wstrzymuje
+    // zerknięcia — najechanie w trakcie zdejmuje bieżące, bo skoro ktoś sięga
+    // po kartę, to jej chce, a nie HUD-u wracającego po zjechaniu kursorem.
+    Binding {
+        target: GlanceService
+        property: "suppressed"
+        value: root.expanded || root.hiddenByUser
+    }
 
+    readonly property var glance: GlanceService.current
+    readonly property bool glanceShown: glance !== null && !expanded
+    // Ostatnie zerknięcie zostaje do rysowania, kiedy bieżące już zniknęło —
+    // inaczej treść znikałaby w chwili startu wygaszania, a nie po nim.
+    property var glanceView: null
+    onGlanceChanged: if (glance) glanceView = glance
+
+    // Szerokość z treści, nie z animowanej wyspy: tekst stoi w miejscu,
+    // a wyspa go odsłania, rozsuwając się. Parzysta — patrz glanceHeight.
+    readonly property int glanceWidth: {
+        const natural = Math.ceil(glanceRow.implicitWidth) + 2 * glancePadding + glanceDotSpace;
+        const w = Math.max(collapsedWidth, glanceView ? glanceView.minWidth : 0, Math.min(glanceMaxWidth, natural));
+        return Math.ceil(w / 2) * 2;
+    }
+
+    // Zmiana głośności spoza wyspy (klawisze multimedialne, pavucontrol).
+    // Najwyższy priorytet: to odpowiedź na własny ruch użytkownika i musi
+    // przyjść od razu. Rozwinięta wyspa pokazuje głośność w pigułce wyjścia,
+    // więc zerknięcie wtedy przepada (waitMs 0).
     Connections {
         target: AudioService
 
         function onVolumeNudged() {
-            // Rozwinięta wyspa i tak pokazuje głośność w pigułce wyjścia,
-            // a przykrycie karty paskiem byłoby krokiem wstecz.
-            if (root.expanded || !root.volumeNoticeEnabled) return;
-            root.volumeNotice = true;
-            volumeNoticeTimer.restart();
+            if (!root.volumeNoticeEnabled) return;
+            const muted = AudioService.muted;
+            const v = AudioService.volume;
+            GlanceService.show({
+                key: "volume",
+                icon: muted ? "volumeOff" : (v < 0.5 ? "volumeLow" : "volume"),
+                iconColor: muted ? "#e5484d" : "#f2f2f2",
+                progress: v,
+                // Wyciszone: pasek zostaje, ale przygaszony — widać poziom,
+                // do którego wróci odciszenie.
+                barColor: muted ? "#5a5a62" : "#ededf0",
+                value: Math.round(v * 100) + "%",
+                valueColor: muted ? "#78787f" : "#f2f2f2",
+                durationMs: root.volumeNoticeDuration,
+                priority: 4
+            });
         }
     }
 
-    Timer {
-        id: volumeNoticeTimer
-        interval: root.volumeNoticeDuration
-        onTriggered: root.volumeNotice = false
-    }
-
-    // ---- ładowarka: poszerzona pigułka ----
+    // ---- ładowarka ----
     // Jak w iOS: zwinięta pigułka rozsuwa się na chwilę na boki i pokazuje
-    // "Ładowanie 48%" / "Na baterii". Wyspa się nie rozwija — to zerknięcie.
-    // Źródłem jest UPower.onBattery, nie stan baterii: `state` dochodzi do
-    // Charging z opóźnieniem, a flaga zasilacza zmienia się od razu.
-    property bool powerNotice: false
-    property bool powerNoticeOnBattery: false
+    // "Ładowanie 48%" / "Na baterii". Źródłem jest UPower.onBattery, nie stan
+    // baterii: `state` dochodzi do Charging z opóźnieniem, a flaga zasilacza
+    // zmienia się od razu.
 
     // -1 = brak punktu odniesienia. Zmierzone: przy starcie onBattery
     // przeskakuje z domyślnego false na prawdziwą wartość ZANIM displayDevice
@@ -318,12 +373,20 @@ PanelWindow {
         const now = UPower.onBattery ? 1 : 0;
         const changed = root.knownPowerSource >= 0 && now !== root.knownPowerSource;
         root.knownPowerSource = now;
-        // Rozwinięta wyspa zasłania pigułkę, a obwódka i tak zniknęła.
-        if (!changed || root.expanded || !root.powerNoticeEnabled) return;
-        root.powerNoticeOnBattery = now === 1;
-        root.volumeNotice = false;
-        root.powerNotice = true;
-        powerNoticeTimer.restart();
+        if (!changed || !root.powerNoticeEnabled) return;
+        const onBattery = now === 1;
+        GlanceService.show({
+            key: "power",
+            icon: "bolt",
+            iconColor: onBattery ? "#8e8e93" : "#30d158",
+            title: onBattery ? "Na baterii" : "Ładowanie",
+            value: Math.round(batteryRing.level * 100) + "%",
+            valueColor: batteryRing.low ? "#ff453a" : (onBattery ? "#f2f2f2" : "#30d158"),
+            minWidth: root.powerNoticeWidth,
+            durationMs: root.powerNoticeDuration,
+            priority: 3,
+            waitMs: 3000
+        });
     }
 
     Connections {
@@ -336,25 +399,105 @@ PanelWindow {
         function onAvailableChanged() { root.checkPowerSource(); }
     }
 
-    Timer {
-        id: powerNoticeTimer
-        interval: root.powerNoticeDuration
-        onTriggered: root.powerNotice = false
+    // ---- mikrofon / kamera ----
+    // Start nagrywania: zerknięcie z nazwą aplikacji, potem już tylko kropka.
+    Connections {
+        target: PrivacyService
+
+        function onStarted(kind, apps) {
+            if (!root.privacyGlanceEnabled) return;
+            const camera = kind === "camera";
+            GlanceService.show({
+                key: "privacy-" + kind,
+                icon: camera ? "camera" : "mic",
+                iconColor: camera ? "#30d158" : "#ff9f0a",
+                title: apps.join(", "),
+                value: camera ? "kamera" : "mikrofon",
+                valueColor: "#9a9aa2",
+                durationMs: root.privacyGlanceDuration,
+                priority: 2,
+                waitMs: 5000
+            });
+        }
     }
 
-    // Szerokość zwiniętej wyspy w danej chwili. collapsedWidth zostaje stałe:
-    // od niego liczą się pozycje pigułek rozmowy i udostępniania, które na czas
-    // poszerzenia po prostu znikają, zamiast skakać na boki.
-    readonly property int restingWidth: powerNotice ? powerNoticeWidth : collapsedWidth
+    // ---- jasność, Caps Lock, Num Lock ----
+    // Jak głośność: odpowiedź na własny klawisz, więc najwyższy priorytet
+    // i teraz albo wcale.
+    Connections {
+        target: HudService
 
-    // Najechanie na wyspę w trakcie pokazywania paska: użytkownik chce kartę,
-    // nie HUD. Bez tego pasek wracałby po zjechaniu kursorem, na resztę czasu.
+        function onBrightnessNudged(value) {
+            if (!root.brightnessGlanceEnabled) return;
+            GlanceService.show({
+                key: "brightness",
+                icon: "brightness",
+                progress: value,
+                value: Math.round(value * 100) + "%",
+                durationMs: root.hudGlanceDuration,
+                priority: 4
+            });
+        }
+
+        function onCapsLockToggled(on) {
+            if (!root.capsGlanceEnabled) return;
+            GlanceService.show({
+                key: "capslock",
+                icon: "capsLock",
+                iconColor: on ? "#f2f2f2" : "#8e8e93",
+                title: "Caps Lock",
+                value: on ? "włączony" : "wyłączony",
+                valueColor: on ? "#f2f2f2" : "#8e8e93",
+                durationMs: root.hudGlanceDuration,
+                priority: 4
+            });
+        }
+
+        // Bez stałej ikonki jak przy Caps Locku: Num Lock jest zwykle
+        // włączony, więc ikonka wisiałaby w pigułce cały czas.
+        function onNumLockToggled(on) {
+            if (!root.numGlanceEnabled) return;
+            GlanceService.show({
+                key: "numlock",
+                icon: "numLock",
+                iconColor: on ? "#f2f2f2" : "#8e8e93",
+                title: "Num Lock",
+                value: on ? "włączony" : "wyłączony",
+                valueColor: on ? "#f2f2f2" : "#8e8e93",
+                durationMs: root.hudGlanceDuration,
+                priority: 4
+            });
+        }
+    }
+
+    // ---- minutniki KClock ----
+    // Dzwoniący minutnik rozwija wyspę na karcie zegara, gdzie jest przycisk
+    // wyciszenia. Własne powiadomienia KClock o minutnikach połyka wtedy
+    // NotificationService — pokazywałyby to samo drugi raz (patrz shownOnIsland).
+    Binding {
+        target: TimerService
+        property: "shownOnIsland"
+        value: root.timersEnabled && root.cardClock >= 0 && TimerService.available
+    }
+
+    Connections {
+        target: TimerService
+
+        function onRang(timer) {
+            if (root.expandOnTimer) root.showCardNotice(root.cardClock, root.timerNoticeDuration);
+        }
+    }
+
+    // Rozmiar zwiniętej wyspy w danej chwili. collapsedWidth/Height zostają
+    // stałe: od nich liczą się pozycje pigułek rozmowy i udostępniania, które
+    // na czas poszerzenia po prostu znikają, zamiast skakać na boki.
+    readonly property int restingWidth: glanceShown ? glanceWidth : collapsedWidth
+    readonly property int restingHeight: glanceShown ? glanceHeight : collapsedHeight
+    readonly property bool restingWide: glanceShown
+
     // Zwinięcie zamyka podgląd okładki — inaczej następne najechanie
     // otwierałoby od razu wielką okładkę zamiast karty.
-    onExpandedChanged: if (expanded) {
-        root.volumeNotice = false;
-        root.powerNotice = false;
-    } else {
+    onExpandedChanged: if (!expanded) {
         root.artPreview = false;
         root.eqView = false;
     }
@@ -486,7 +629,7 @@ PanelWindow {
         music: [hasPlayer ? 440 : 296, hasPlayer ? 118 : 98],
         airpods: [airpods.implicitWidth, airpods.implicitHeight],
         discord: [440, 118],
-        clock: [296, 98],
+        clock: [clockCard.implicitWidth, clockCard.implicitHeight],
         connectivity: [connectivity.implicitWidth, connectivity.implicitHeight],
         notifications: [notifications.implicitWidth, notifications.implicitHeight]
     })
@@ -990,7 +1133,7 @@ PanelWindow {
         anchors.topMargin: root.topMargin
 
         width: root.expanded ? root.expandedWidth : root.restingWidth
-        height: root.expanded ? root.expandedHeight : root.collapsedHeight
+        height: root.expanded ? root.expandedHeight : root.restingHeight
         radius: root.expanded ? 30 : height / 2
 
         color: "#0a0a0c"
@@ -1066,47 +1209,72 @@ PanelWindow {
             onTriggered: wheel.accum = 0
         }
 
-        // ---- widok zwinięty: pasek głośności ---------------------------
-        // Zamiast zegara, na volumeNoticeDuration po zmianie głośności
-        // spoza wyspy. Ta sama pigułka, tylko inna treść — bez rozwijania
-        // i bez zmiany rozmiaru, więc nic nie skacze na ekranie.
+        // ---- widok zwinięty: zerknięcie --------------------------------
+        // Treść GlanceService: ikona, tytuł albo pasek, wartość po prawej.
+        // Szerokość stała (docelowa), nie z animowanej wyspy — treść stoi
+        // w miejscu, a wyspa ją odsłania, rozsuwając się.
         RowLayout {
-            anchors.centerIn: parent
-            width: root.collapsedWidth - 28
-            spacing: 8
+            id: glanceRow
 
-            opacity: (!root.expanded && root.volumeNotice && !root.powerNotice) ? 1 : 0
+            readonly property var g: root.glanceView
+            readonly property bool hasBar: g !== null && g.progress >= 0
+
+            // Od lewej krawędzi DOCELOWEJ szerokości, nie centerIn: miejsce
+            // na kropkę jest tylko po prawej.
+            anchors.verticalCenter: parent.verticalCenter
+            x: (parent.width - root.glanceWidth) / 2 + root.glancePadding
+            width: root.glanceWidth - 2 * root.glancePadding - root.glanceDotSpace
+            spacing: 10
+
+            opacity: root.glanceShown ? 1 : 0
             visible: opacity > 0.01
 
+            // Wejście z opóźnieniem, żeby treść nie wystawała poza wyspę,
+            // która dopiero zaczyna rosnąć.
             Behavior on opacity {
-                NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
+                SequentialAnimation {
+                    PauseAnimation { duration: root.glanceShown ? 120 : 0 }
+                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                }
             }
 
             IslandIcon {
+                id: glanceIcon
                 Layout.alignment: Qt.AlignVCenter
-                kind: AudioService.muted ? "volumeOff"
-                    : (AudioService.volume < 0.5 ? "volumeLow" : "volume")
-                size: 14
-                color: AudioService.muted ? "#e5484d" : "#f2f2f2"
+                // Nazwa z IPC może być dowolna, a nieznana dałaby ikonę "play".
+                kind: glanceRow.g && glanceIcon.paths[glanceRow.g.icon] ? glanceRow.g.icon : "bell"
+                size: 18
+                color: glanceRow.g ? glanceRow.g.iconColor : "#f2f2f2"
                 Behavior on color { ColorAnimation { duration: 140 } }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                visible: !glanceRow.hasBar && text !== ""
+                text: glanceRow.g ? glanceRow.g.title : ""
+                color: "#f2f2f2"
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
             }
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 4
+                Layout.preferredWidth: root.glanceBarWidth
+                Layout.preferredHeight: 6
                 Layout.alignment: Qt.AlignVCenter
-                radius: 2
+                visible: glanceRow.hasBar
+                radius: 3
                 antialiasing: true
                 color: Qt.rgba(1, 1, 1, 0.16)
 
                 Rectangle {
-                    width: parent.width * Math.max(0, Math.min(1, AudioService.volume))
+                    width: parent.width * (glanceRow.hasBar ? glanceRow.g.progress : 0)
                     height: parent.height
                     radius: parent.radius
                     antialiasing: true
-                    // Wyciszone: pasek zostaje, ale przygaszony — widać poziom,
-                    // do którego wróci odciszenie.
-                    color: AudioService.muted ? "#5a5a62" : "#ededf0"
+                    color: glanceRow.g ? glanceRow.g.barColor : "#ededf0"
 
                     Behavior on width {
                         NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
@@ -1115,63 +1283,18 @@ PanelWindow {
                 }
             }
 
-            // Stała szerokość, żeby pasek nie drgał przy przejściu
+            // Przy pasku stała szerokość, żeby nie drgał przy przejściu
             // z "9%" na "100%".
             Text {
-                Layout.preferredWidth: 30
+                Layout.preferredWidth: glanceRow.hasBar ? 38 : implicitWidth
                 Layout.alignment: Qt.AlignVCenter
                 horizontalAlignment: Text.AlignRight
-                text: Math.round(AudioService.volume * 100) + "%"
-                color: AudioService.muted ? "#78787f" : "#f2f2f2"
-                font.pixelSize: 11
+                visible: text !== ""
+                text: glanceRow.g ? glanceRow.g.value : ""
+                color: glanceRow.g ? glanceRow.g.valueColor : "#f2f2f2"
+                font.pixelSize: 13
                 font.weight: Font.DemiBold
                 Behavior on color { ColorAnimation { duration: 140 } }
-            }
-        }
-
-        // ---- widok zwinięty: ładowarka ---------------------------------
-        // Szerokość stała (docelowa), nie z animowanej wyspy — tekst ma stać
-        // w miejscu, a wyspa go odsłania, rozsuwając się (jak treść rozwinięta).
-        RowLayout {
-            anchors.centerIn: parent
-            width: root.powerNoticeWidth - 32
-            spacing: 7
-
-            opacity: (!root.expanded && root.powerNotice) ? 1 : 0
-            visible: opacity > 0.01
-
-            // Wejście z opóźnieniem, żeby tekst nie wystawał poza wyspę,
-            // która dopiero zaczyna się rozsuwać.
-            Behavior on opacity {
-                SequentialAnimation {
-                    PauseAnimation { duration: root.powerNotice ? 140 : 0 }
-                    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
-                }
-            }
-
-            IslandIcon {
-                Layout.alignment: Qt.AlignVCenter
-                kind: "bolt"
-                size: 15
-                color: root.powerNoticeOnBattery ? "#8e8e93" : "#30d158"
-            }
-
-            Text {
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                text: root.powerNoticeOnBattery ? "Na baterii" : "Ładowanie"
-                color: "#f2f2f2"
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-            }
-
-            Text {
-                Layout.alignment: Qt.AlignVCenter
-                text: Math.round(batteryRing.level * 100) + "%"
-                color: batteryRing.low ? "#ff453a" : (root.powerNoticeOnBattery ? "#f2f2f2" : "#30d158")
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
             }
         }
 
@@ -1181,7 +1304,7 @@ PanelWindow {
             anchors.centerIn: parent
             spacing: 7
 
-            opacity: (root.expanded || root.volumeNotice || root.powerNotice) ? 0 : 1
+            opacity: (root.expanded || root.glanceShown) ? 0 : 1
             visible: opacity > 0.01
 
             Behavior on opacity {
@@ -1269,6 +1392,35 @@ PanelWindow {
                 color: "#e5484d"
                 visible: AudioService.micReady && !AudioService.micOn
             }
+
+            // Caps Lock włączony — o nim łatwo zapomnieć, jak o wyciszeniu.
+            IslandIcon {
+                Layout.alignment: Qt.AlignVCenter
+                kind: "capsLock"
+                size: 14
+                color: "#f2f2f2"
+                visible: root.capsIndicatorEnabled && HudService.capsLock
+            }
+        }
+
+        // ---- kropka prywatności ----------------------------------------
+        // Jak w iOS: pomarańczowa = mikrofon, zielona = kamera (kamera ma
+        // pierwszeństwo, bo zwykle idzie z mikrofonem). Tylko w zwiniętej
+        // pigułce — rozwinięta ma swoją treść, a rozmowę widać na karcie.
+        Rectangle {
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            width: 6
+            height: 6
+            radius: 3
+            antialiasing: true
+            color: PrivacyService.cameraActive ? "#30d158" : "#ff9f0a"
+
+            opacity: root.privacyDotShown ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+            Behavior on color { ColorAnimation { duration: 200 } }
         }
 
         // ---- widok rozwinięty: pasek kart ------------------------------
@@ -1719,32 +1871,25 @@ PanelWindow {
                 }
             }
 
-            // ---- karta: duży zegar + data ----
+            // ---- karta: zegar + minutniki KClock ----
             Item {
                 x: root.cardClock * root.slotWidth
                 width: root.slotWidth
                 height: parent.height
                 visible: root.cardClock >= 0
 
-                ColumnLayout {
+                ClockCard {
+                    id: clockCard
                     anchors.centerIn: parent
-                    width: root.cardWidths[root.cardClock] - 28
-                    spacing: 1
+                    width: implicitWidth
+                    height: implicitHeight
 
-                    Text {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: Qt.formatTime(clock.date, root.clockCardFormat)
-                        color: "#f5f5f5"
-                        font.pixelSize: 30
-                        font.weight: Font.Light
-                    }
-
-                    Text {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: clock.date.toLocaleDateString(Qt.locale(root.uiLocale), root.clockDateFormat)
-                        color: "#9a9aa2"
-                        font.pixelSize: 12
-                    }
+                    date: clock.date
+                    timeFormat: root.clockCardFormat
+                    dateFormat: root.clockDateFormat
+                    localeName: root.uiLocale
+                    timersEnabled: root.timersEnabled
+                    active: root.expanded && root.currentKey === "clock" && cardStrip.shown
                 }
             }
 
@@ -2225,7 +2370,7 @@ PanelWindow {
     Rectangle {
         id: voicePill
 
-        readonly property bool shown: root.inVoice && root.voicePillEnabled && !root.expanded && !root.powerNotice
+        readonly property bool shown: root.inVoice && root.voicePillEnabled && !root.expanded && !root.restingWide
 
         x: pillHoverArea.x
         y: pillHoverArea.y
@@ -2317,8 +2462,8 @@ PanelWindow {
     Rectangle {
         id: screencastPill
 
-        readonly property bool shown: ScreencastService.active && root.screencastPillEnabled
-                                      && !root.expanded && !root.powerNotice
+        readonly property bool shown: PrivacyService.screenActive && root.screencastPillEnabled
+                                      && !root.expanded && !root.restingWide
 
         // Lewa strona, lustrzanie do pigułki rozmowy po prawej.
         x: Math.round((root.width - root.collapsedWidth) / 2) - root.pillGap - width
@@ -2374,16 +2519,91 @@ PanelWindow {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 110
                 elide: Text.ElideRight
-                text: ScreencastService.appName
+                text: PrivacyService.screenApp
                 color: "#f2f2f2"
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
             }
 
             Text {
-                text: root.formatTime(ScreencastService.elapsedSeconds)
+                text: root.formatTime(PrivacyService.screenElapsedSeconds)
                 color: "#ffb450"
                 font.pixelSize: 12
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Pigułka minutnika — po lewej, za pigułką udostępniania
+    // ---------------------------------------------------------------
+
+    // Informacyjna jak udostępnianie: bez hovera i bez regionu w masce.
+    // Sterowanie jest na karcie zegara. Pokazuje TimerService.featured:
+    // dzwoniący, potem najbliższy końca, potem zatrzymany w połowie.
+    Rectangle {
+        id: timerPill
+
+        readonly property var timer: TimerService.featured
+        readonly property bool shown: timer !== null && root.timerPillEnabled && root.timersEnabled
+                                      && !root.expanded && !root.restingWide
+        readonly property int more: TimerService.activeTimers.length - 1
+
+        // Za pigułką udostępniania, gdy jest; inaczej przy samej wyspie.
+        x: (screencastPill.shown ? screencastPill.x : Math.round((root.width - root.collapsedWidth) / 2))
+           - root.pillGap - width
+        y: root.topMargin
+        height: root.collapsedHeight
+        width: timerRow.implicitWidth + 24
+        radius: height / 2
+
+        color: "#0a0a0c"
+        border.width: 1
+        border.color: Qt.rgba(1, 1, 1, 0.08)
+
+        visible: shown
+        opacity: shown ? 1 : 0
+        scale: shown ? 1 : 0.9
+        transformOrigin: Item.Right
+
+        Behavior on opacity {
+            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        }
+        Behavior on scale {
+            NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
+        }
+
+        RowLayout {
+            id: timerRow
+
+            readonly property color tint: !timerPill.timer ? "#8e8e93"
+                : timerPill.timer.ringing ? "#ff453a"
+                : timerPill.timer.running ? "#ff9f0a" : "#8e8e93"
+
+            anchors.centerIn: parent
+            spacing: 6
+
+            IslandIcon {
+                Layout.alignment: Qt.AlignVCenter
+                kind: timerPill.timer && timerPill.timer.ringing ? "bell"
+                    : (timerPill.timer && !timerPill.timer.running ? "pause" : "timer")
+                size: 14
+                color: timerRow.tint
+            }
+
+            Text {
+                text: timerPill.timer ? TimerService.format(TimerService.remaining(timerPill.timer)) : ""
+                color: timerRow.tint
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                font.features: { "tnum": 1 }
+            }
+
+            // Więcej aktywnych minutników niż jeden.
+            Text {
+                visible: timerPill.more > 0
+                text: "+" + timerPill.more
+                color: "#8e8e93"
+                font.pixelSize: 11
             }
         }
     }
