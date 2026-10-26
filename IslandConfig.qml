@@ -86,6 +86,7 @@ Singleton {
         "volume.step": [0.005, 0.25],
         "notifications.historyLimit": [1, 500],
         "pills.maxWidth": [60, 600],
+        "pills.voiceSwapMs": [0, 600000],
         "general.topMargin": [0, 200],
         "glances.commandMs": [500, 60000],
         "glances.ipcMs": [500, 60000],

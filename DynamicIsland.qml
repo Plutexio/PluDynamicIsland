@@ -141,6 +141,10 @@ PanelWindow {
     readonly property bool timerPillEnabled: IslandConfig.pills.timer
     readonly property int pillGap: IslandConfig.pills.gap             // odstęp pigułek (rozmowa, udostępnianie) od wyspy
     readonly property int pillMaxWidth: IslandConfig.pills.maxWidth   // dłuższe nazwy kanałów / aplikacji są obcinane
+    // Pigułka rozmowy przełącza się co tyle ms między rozmówcą a czasem.
+    // 0 = bez przełączania: nazwa przez pierwszą godzinę, potem sam czas.
+    readonly property int voiceSwapMs: IslandConfig.pills.voiceSwapMs
+    property int voiceSwapAnimMs: 420
 
     // Efekty (opis w config.default.jsonc). Fala, ciecz pigułek i kaskada
     // czytają swoje przełączniki same, w EventRipple / LiquidPill / CascadeShift.
@@ -754,7 +758,7 @@ PanelWindow {
         ? DiscordService.channelName
         : (DiscordService.connected ? "Nie jesteś na kanale" : "Discord niepołączony")
     readonly property string discordSubtitle: {
-        if (inVoice) return formatTime(DiscordService.elapsedSeconds);
+        if (inVoice) return formatCallTime(DiscordService.elapsedSeconds, true);
         if (DiscordService.connected) return "Wejdź na kanał głosowy";
         switch (DiscordService.error) {
         case "brak konfiguracji": return "Brak ~/.config/PluDynamicIsland/discord.json";
@@ -771,6 +775,34 @@ PanelWindow {
         const m = Math.floor(total / 60);
         const s = total % 60;
         return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    // Czas rozmowy: M:SS do godziny, potem HH:MM:SS (albo HH:MM bez sekund).
+    function formatCallTime(seconds, withSeconds) {
+        const total = Math.max(0, Math.floor(seconds || 0));
+        if (total < 3600) return formatTime(total);
+        const pad = n => (n < 10 ? "0" : "") + n;
+        const hm = pad(Math.floor(total / 3600)) + ":" + pad(Math.floor(total / 60) % 60);
+        return withSeconds ? hm + ":" + pad(total % 60) : hm;
+    }
+
+    // Pigułka rozmowy: nazwa kanału (albo rozmówcy) na zmianę z czasem, co
+    // voiceSwapMs. Po godzinie sekundy tylko przy animacjach w pętli — bez
+    // nich (oszczędzanie, laptop) czas zmienia się raz na minutę, więc
+    // pigułka nie wymusza przerysowania ekranu co sekundę.
+    property bool voiceSwapTime: false
+    readonly property bool voicePillShowsTime: voiceSwapMs > 0
+        ? voiceSwapTime : DiscordService.elapsedSeconds >= 3600
+    readonly property string voicePillTime:
+        formatCallTime(DiscordService.elapsedSeconds, IslandConfig.loopAnimations)
+
+    Timer {
+        interval: Math.max(1000, root.voiceSwapMs)
+        repeat: true
+        running: voicePill.shown && root.voiceSwapMs > 0
+        onTriggered: root.voiceSwapTime = !root.voiceSwapTime
+        // Pigułka pojawia się zawsze od rozmówcy.
+        onRunningChanged: if (!running) root.voiceSwapTime = false
     }
 
     // ---------------------------------------------------------------
@@ -2588,20 +2620,56 @@ PanelWindow {
                 }
             }
 
-            Text {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 110
-                elide: Text.ElideRight
-                text: DiscordService.channelName
-                color: "#f2f2f2"
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
-            }
+            // Nazwa i czas jak na bębnie: jedno odjeżdża w górę, drugie wjeżdża
+            // od dołu (wstecz — odwrotnie). Nie RollingText: ten animuje każdą
+            // zmianę tekstu, a czas zmienia się co sekundę. Szerokość płynie
+            // razem z fazą, więc pigułka rozciąga się pod nowy tekst, a nie
+            // skacze na początku przejścia.
+            Item {
+                id: voiceSwap
 
-            Text {
-                text: root.formatTime(DiscordService.elapsedSeconds)
-                color: "#9a9aa2"
-                font.pixelSize: 12
+                property real phase: root.voicePillShowsTime ? 1 : 0
+                Behavior on phase {
+                    NumberAnimation { duration: root.voiceSwapAnimMs; easing.type: Easing.InOutCubic }
+                }
+
+                readonly property real nameWidth: Math.min(110, voiceName.implicitWidth)
+                readonly property real timeWidth: voiceTime.implicitWidth
+
+                Layout.fillWidth: true
+                Layout.preferredWidth: Math.ceil(nameWidth + (timeWidth - nameWidth) * phase)
+                Layout.maximumWidth: Layout.preferredWidth
+                Layout.preferredHeight: voiceName.implicitHeight
+                Layout.alignment: Qt.AlignVCenter
+                clip: true
+
+                Text {
+                    id: voiceName
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: voiceSwap.nameWidth
+                    y: -voiceSwap.phase * voiceSwap.height
+                    opacity: 1 - voiceSwap.phase
+                    visible: voiceSwap.phase < 1
+                    elide: Text.ElideRight
+                    text: DiscordService.channelName
+                    color: "#f2f2f2"
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    id: voiceTime
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: (1 - voiceSwap.phase) * voiceSwap.height
+                    opacity: voiceSwap.phase
+                    visible: voiceSwap.phase > 0
+                    text: root.voicePillTime
+                    color: "#f2f2f2"
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                    // Cyfry stałej szerokości: inaczej pigułka drgałaby co sekundę.
+                    font.features: { "tnum": 1 }
+                }
             }
 
             // Deafen ma pierwszeństwo — wyciszone słuchawki oznaczają też mikrofon.

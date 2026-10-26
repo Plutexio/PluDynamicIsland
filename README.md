@@ -71,8 +71,11 @@ Powiadomienia i tak trafiają do historii, tylko nie widać dymka.
 - **Przy zmianie utworu lub play/pauzie** — rozwija się sama na ~3 s na karcie
   muzyki, jak powiadomienie w iOS.
 - **Podczas rozmowy na Discordzie** — obok zwiniętej pigułki stoi druga, mała:
-  zielona kropka, nazwa kanału, timer i ikona wyciszenia. Najechanie na nią
-  rozwija wyspę od razu na karcie Discorda.
+  zielona kropka, nazwa kanału (w rozmowie prywatnej — rozmówcy) i ikona
+  wyciszenia, co 4 s (`pills.voiceSwapMs`) na zmianę z czasem rozmowy —
+  przewijanym jak na bębnie. Po godzinie czas to `HH:MM:SS`, a bez animacji
+  w pętli (`loopAnimations`) `HH:MM`. Najechanie na nią rozwija wyspę od
+  razu na karcie Discorda.
 - **Podczas udostępniania ekranu** — po lewej od zwiniętej pigułki stoi
   informacyjna pigułka z czerwoną kropką, nazwą aplikacji, która
   odbiera ekran, i timerem. Nie reaguje na kursor.

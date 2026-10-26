@@ -412,6 +412,15 @@ i logi, na stdin komendy `mute` / `deafen` / `leave`.
   ścieżka to okno zgody w Discordzie przy pierwszym uruchomieniu.
 - Cloudflare odrzuca domyślny UA `urllib` (`403`, error 1010) — mostek ustawia własny.
 - Stan początkowy mute/deafen z `GET_VOICE_SETTINGS` po uwierzytelnieniu.
+- Rozmowa prywatna (typ kanału 1 / 3, bez `guild_id`) ma w RPC pusty `name` —
+  `channelName` to wtedy rozmówcy z `voice_states` (`nick`), śledzeni przez
+  `VOICE_STATE_CREATE/DELETE` (subskrybowane tylko dla prywatnych). Kto wyszedł,
+  zostaje w nazwie do końca rozmowy; nikt jeszcze nie wszedł → „Rozmowa prywatna".
+- Pigułka rozmowy: nazwa na zmianę z czasem co `pills.voiceSwapMs` (0 = nazwa
+  przez godzinę, potem sam czas). Po godzinie sekundy tylko przy
+  `loopAnimations`. Przejście to `voiceSwap.phase`, nie `RollingText` — ten
+  animuje każdą zmianę tekstu, a czas zmienia się co sekundę. Szerokość
+  pigułki jest interpolowana fazą (zmierzone zrzutami: 130 → 94 px płynnie).
 - Test mostka bez wyspy: `python3 discord_bridge.py` (stdin EOF kończy go czysto).
   Discord musi działać, żeby cokolwiek zobaczyć — sprawdź `ls $XDG_RUNTIME_DIR/discord-ipc-*`.
 

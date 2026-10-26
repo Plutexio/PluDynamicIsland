@@ -54,6 +54,11 @@ AUTH_FAIL_WAIT_S = 60    # przerwa po dwóch nieudanych autoryzacjach z rzędu
 HTTP_TIMEOUT_S = 10
 API = "https://discord.com/api"
 
+# Typy kanałów Discorda: 1 = DM, 3 = grupa DM. Rozmowy prywatne nie mają nazwy
+# (RPC daje pusty "name"), więc pigułka pokazuje w nich rozmówców.
+PRIVATE_CHANNEL_TYPES = (1, 3)
+PRIVATE_CALL_FALLBACK = "Rozmowa prywatna"
+
 # ---------------------------------------------------------------
 # Wyjście do QML
 # ---------------------------------------------------------------
@@ -228,6 +233,10 @@ class Bridge:
         self.authenticated = False
         self.my_user_id = ""
         self.channel_id = ""
+        self.channel_private = False
+        self.channel_label = ""   # nazwa kanału z RPC (grupa DM może mieć własną)
+        self.peers = {}           # id -> nazwa wyświetlana, bez nas; tylko rozmowy prywatne
+        self.last_peers = ""      # rozmówcy, którzy wyszli — rozmowa trwa dalej
         self.used_saved_token = False
         self.auth_attempts = 0
 
@@ -434,21 +443,28 @@ class Bridge:
             return
 
         new_id = str(channel["id"])
-        if self.channel_id and self.channel_id != new_id:
-            self.subscribe("VOICE_STATE_UPDATE", {"channel_id": self.channel_id}, on=False)
+        private = channel.get("type") in PRIVATE_CHANNEL_TYPES and not channel.get("guild_id")
         if self.channel_id != new_id:
-            self.subscribe("VOICE_STATE_UPDATE", {"channel_id": new_id})
+            if self.channel_id:
+                self.watch_channel(self.channel_id, self.channel_private, on=False)
+            self.watch_channel(new_id, private)
+            self.last_peers = ""
+            log(f"kanał głosowy typu {channel.get('type')}" + (" (prywatny)" if private else ""))
         self.channel_id = new_id
+        self.channel_private = private
+        self.channel_label = channel.get("name") or ""
 
         me = None
+        self.peers = {}
         for vs in channel.get("voice_states") or []:
             if str((vs.get("user") or {}).get("id", "")) == self.my_user_id:
                 me = vs.get("voice_state") or {}
-                break
+            elif private:
+                self.add_peer(vs)
 
         kw = {
             "inVoice": True,
-            "channelName": channel.get("name") or "Kanał głosowy",
+            "channelName": self.display_name(),
         }
         if me is not None:
             kw["muted"] = bool(me.get("self_mute", state["muted"]))
@@ -457,13 +473,46 @@ class Bridge:
             kw["callStart"] = int(time.time() * 1000)
         set_state(**kw)
 
+    def watch_channel(self, channel_id, private, on=True):
+        self.subscribe("VOICE_STATE_UPDATE", {"channel_id": channel_id}, on=on)
+        # Wejścia i wyjścia potrzebne tylko do nazwy rozmowy prywatnej — na
+        # kanale serwera pigułka pokazuje nazwę kanału, a nie ludzi.
+        if private:
+            self.subscribe("VOICE_STATE_CREATE", {"channel_id": channel_id}, on=on)
+            self.subscribe("VOICE_STATE_DELETE", {"channel_id": channel_id}, on=on)
+
+    def add_peer(self, vs):
+        user = vs.get("user") or {}
+        uid = str(user.get("id", ""))
+        if not uid or uid == self.my_user_id:
+            return
+        # "nick" to w RPC nazwa, którą widać w kliencie (pseudonim albo
+        # wyświetlana); global_name / username tylko na wypadek jej braku.
+        self.peers[uid] = vs.get("nick") or user.get("global_name") or user.get("username") or "?"
+
+    def display_name(self):
+        if not self.channel_private:
+            return self.channel_label or "Kanał głosowy"
+        # Grupa DM z nadaną nazwą ma ją pokazać, tak jak klient.
+        if self.channel_label:
+            return self.channel_label
+        if self.peers:
+            self.last_peers = ", ".join(sorted(self.peers.values(), key=str.casefold))
+            return self.last_peers
+        # Rozmówca rozłączył się (albo jeszcze nie odebrał po naszej stronie
+        # dzwonienia) — zostaje ostatnia znana nazwa, potem ogólnik.
+        return self.last_peers or PRIVATE_CALL_FALLBACK
+
     def leave_channel_state(self):
         if self.channel_id:
             try:
-                self.subscribe("VOICE_STATE_UPDATE", {"channel_id": self.channel_id}, on=False)
+                self.watch_channel(self.channel_id, self.channel_private, on=False)
             except Disconnected:
                 pass
             self.channel_id = ""
+        self.channel_private = False
+        self.peers = {}
+        self.last_peers = ""
         set_state(inVoice=False, channelName="", callStart=0)
 
     def handle_event(self, evt, data):
@@ -474,8 +523,20 @@ class Bridge:
                 self.leave_channel_state()
         elif evt == "VOICE_SETTINGS_UPDATE":
             self.apply_voice_settings(data)
+        elif evt in ("VOICE_STATE_CREATE", "VOICE_STATE_DELETE"):
+            if not self.channel_private:
+                return
+            if evt == "VOICE_STATE_CREATE":
+                self.add_peer(data)
+            else:
+                self.peers.pop(str((data.get("user") or {}).get("id", "")), None)
+            set_state(channelName=self.display_name())
         elif evt == "VOICE_STATE_UPDATE":
             if str((data.get("user") or {}).get("id", "")) != self.my_user_id:
+                # Zmiana pseudonimu rozmówcy w trakcie — rzadkie, ale tanie.
+                if self.channel_private and str((data.get("user") or {}).get("id", "")) in self.peers:
+                    self.add_peer(data)
+                    set_state(channelName=self.display_name())
                 return
             vs = data.get("voice_state") or {}
             set_state(
@@ -524,6 +585,9 @@ class Bridge:
             self.sock = None
             self.authenticated = False
             self.channel_id = ""
+            self.channel_private = False
+            self.peers = {}
+            self.last_peers = ""
             set_state(connected=False, inVoice=False, channelName="", callStart=0)
 
     def run(self):

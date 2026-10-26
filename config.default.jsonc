@@ -209,7 +209,11 @@
         "screencast": true,     // udostępnianie ekranu: aplikacja + czas
         "timer": true,          // minutnik KClock: odliczanie
         "gap": 8,               // odstęp od wyspy, px
-        "maxWidth": 200         // dłuższe nazwy są obcinane, px
+        "maxWidth": 200,        // dłuższe nazwy są obcinane, px
+        // Pigułka rozmowy przełącza się co tyle ms między rozmówcą / kanałem
+        // a czasem rozmowy. 0 = bez przełączania: nazwa przez pierwszą
+        // godzinę, potem sam czas.
+        "voiceSwapMs": 4000
     },
 
     // ---- powiadomienia -----------------------------------------------
